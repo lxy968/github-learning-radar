@@ -8,7 +8,8 @@
 | --- | --- | --- |
 | TypeScript | `tsc --noEmit` 成功 | 通过 |
 | 逻辑与安全规则 | `scripts/verify.ts` 成功，覆盖评分、缓存、会话、任务、保留、生产预检和最小权限规则 | 通过 |
-| 仓库静态卫生 | Git for Windows 已安装并初始化 `main`；候选与忽略规则审计完成，非严格 `scripts/repository-hygiene.ts` 成功，仅因尚无首个提交跳过跟踪历史检查 | 条件通过 |
+| Git 跟踪审计 | Git 2.55.0.windows.2、本地 `main`、GitHub noreply 作者、153 个受审计文件和首个提交 `7a188bd`；`git diff --cached --check` 与严格仓库卫生通过 | 通过（尚未推送） |
+| 仓库静态卫生 | `.env.local`、`.data`、依赖、构建、日志和私钥被忽略；`.env.example` 密钥为空；`.gitattributes` 固定跨平台 LF/二进制图片 | 通过 |
 | standalone 构建 | Next.js 生产构建成功，产物含 server、public、static 和生产预检 | 通过 |
 | 生产 HTTP | 首页、主要页面、404、Cookie、健康、学习方案入口等回归成功 | 通过 |
 | 运行时域名 | 构建后注入临时 `SITE_URL`，首页 canonical、sitemap、robots 均使用运行时域名 | 通过 |
@@ -22,11 +23,10 @@
 
 | 发布门禁 | 当前状态 | 需要的权威证据 | 恢复条件/入口 |
 | --- | --- | --- | --- |
-| Git 跟踪审计 | Git 2.55.0.windows.2 已安装，本地 `main` 已初始化；152 个候选文件约 1.05 MB，敏感环境/数据/构建目录均被忽略。尚无作者身份、index 和首个提交 | staged 文件清单、严格卫生检查、有效首个提交与提交后 clean status | 维护者提供 `user.name`/`user.email` 后，仅在本仓库配置身份并完成首个本地提交 |
 | 真实浏览器 6.4 | 运行时已恢复；390/768/1440、移动/桌面导航、404、规则方案、步骤刷新保持、焦点环和无控制台错误已通过。自动化 Tab/Enter 未产生原生事件，新标签页共享同一 Cookie 上下文 | 实际 Tab/Enter/Space 与屏幕阅读器、断网恢复、两套独立浏览器 Cookie 隔离证据 | 使用可注入真实键盘事件且支持第二隔离上下文的浏览器，或由维护者完成人工回归；不重复已通过的截图/布局检查 |
 | Docker 镜像 | 当前系统无 Docker | Web/Worker target 构建日志、非 root 进程、镜像内容和健康检查 | Docker 或 GitHub Actions 的 `container-integration` |
 | 真实 PostgreSQL | 当前系统无 Docker、`psql`、`DATABASE_URL` | 迁移 0001–0013、事务投影、并发领取、投影重建、保留 dry-run | 隔离测试库运行 `compose.integration.yml` 与数据库命令 |
-| GitHub 仓库设置 | 尚无真实远端仓库 | 分支保护、Required CI、Dependabot、Secret Scanning、Issue/PR 模板页面 | 创建 GitHub 仓库并完成 `RELEASE_CHECKLIST.md` |
+| GitHub 仓库设置 | 维护者已创建 Private 仓库 `lxy968/github-learning-radar`，但本地尚未添加 remote 或推送 | 首次推送、CI 结果、分支保护、Required CI、Dependabot、Secret Scanning、Issue/PR 模板页面 | 维护者再次确认后添加 `origin` 并推送 `main`，仓库继续保持 Private |
 | GitHub discovery smoke | 普通 CI 不调用外部 API | 受控调用次数、限流、耗时、候选数量和脱敏日志 | 在预览 Worker 使用最小权限 Token 手动运行一次 |
 | DeepSeek smoke | 为避免费用未执行 | provider、模型、耗时、成功/fallback 和 provider 返回 Token | 受控环境运行一次 `pnpm ai:smoke`；不进入普通 CI |
 | 预发布部署 | 平台、PostgreSQL、域名和 Secret 未确定 | HTTPS 站点、Web/Worker/Cron、`status: ok`/`storage: postgres` | 选择平台后执行 `DEPLOYMENT.md` 与 `OPERATIONS.md` |

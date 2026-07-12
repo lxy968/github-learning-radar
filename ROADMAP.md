@@ -51,7 +51,7 @@
 - PostgreSQL 原子领取逻辑已通过本地并发语义测试，但本地没有真实 `DATABASE_URL`，尚未完成多进程 PostgreSQL 集成验证。
 - `.data` 只适合本地和单机演示；生产环境必须使用 PostgreSQL。
 - 学习进度已同步到匿名会话，但匿名 Cookie 仍是唯一恢复凭据；尚未提供登录后的跨浏览器账号同步。
-- Git for Windows 2.55.0 已安装并初始化本地 `main` 分支；当前仍没有首个提交，且 Git 作者姓名/邮箱尚未配置。
+- Git for Windows 2.55.0 已安装，本地 `main` 已有有效首个提交 `7a188bd`；当前尚未配置远端或上传 GitHub。
 - 内置页面控制近期连接失败；必要时使用自动测试和本地 HTTP 检查，但正式发布前仍要完成真实浏览器回归。
 
 ## 三、推进原则
@@ -513,7 +513,7 @@
 
 ### 8.1 开源发布前仓库卫生检查
 
-**状态：自动化与本地 Git 初始化完成；首个提交待作者身份（2026-07-12）**
+**状态：本地 Git 跟踪门禁已完成；私有远端推送待确认（2026-07-12）**
 
 已完成：
 
@@ -528,9 +528,9 @@
 
 2026-07-12 恢复证据：已从 Git 官方下载页取得 Git for Windows 2.55.0.windows.2，安装包 Authenticode 签名有效；本地仓库已初始化为 `main`。`git status --untracked-files=all` 显示 152 个候选文件、约 1.05 MB，没有超过 500 KB 的单文件；`.env.local`、`.data`、`node_modules`、`.next` 和日志均由 `.gitignore` 排除，`.env.example` 的 GitHub/DeepSeek/数据库/管理员密钥值为空。截图证据目录将纳入首个提交。
 
-当前阻塞：全局 Git `user.name` 与 `user.email` 均为空，不能替维护者编造提交身份。首个提交前还需配置作者身份、暂存全部候选、复查 staged diff，并运行严格仓库卫生门禁。
+本地完成证据：仅在当前仓库配置 GitHub noreply 作者身份；新增 `.gitattributes` 统一跨平台 LF 并把截图格式声明为二进制。最终索引包含 153 个文件、18,553 行变更；`git diff --cached --check`、敏感路径检查和严格 `scripts/repository-hygiene.ts --strict` 均通过。首个提交为 `7a188bd chore: establish initial project baseline`。
 
-下一步：维护者提供 Git 提交姓名和邮箱后，仅为本仓库配置作者身份，完成暂存审计、严格门禁和首个本地提交；暂不添加 GitHub remote 或上传。
+下一步：维护者已创建私有仓库 `lxy968/github-learning-radar`。在再次确认上传后添加 `origin`、推送 `main`，观察真实 GitHub Actions；仓库保持 Private，不创建 tag 或 Release。
 
 ### 8.2 v0.1.0 发布资料准备
 
@@ -611,7 +611,7 @@
 - 证据矩阵明确列出 Git、浏览器、Docker/PostgreSQL、GitHub 设置、外部 smoke、预发布、备份回滚和正式 Release 的权威证据与恢复入口。
 - 恢复顺序固定为：Git/CI → Docker/PostgreSQL → 浏览器 6.4 → 预发布/回滚 → 受控 GitHub/DeepSeek smoke → tag/Release。外部条件未变化时不再重复已知失败的门禁。
 
-当前可继续完成首个本地 Git 提交，但需要维护者提供提交姓名和邮箱。其后仍需至少一个外部条件变化：创建私有 GitHub 仓库、提供 Docker/隔离 PostgreSQL、提供独立浏览器会话/人工键盘回归，或确定预发布平台/数据库/域名。
+本地 Git 门禁与首个提交已完成，私有 GitHub 仓库也已由维护者创建，但尚未添加 remote 或上传。下一步需维护者确认首次推送；随后由 GitHub Actions 补容器/PostgreSQL 证据。浏览器独立会话/人工键盘回归和预发布平台仍待后续条件。
 
 ## 九、每阶段统一验证命令
 
