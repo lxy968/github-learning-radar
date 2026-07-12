@@ -1,0 +1,23 @@
+name: 功能建议
+description: 建议新的学习、推荐或工程能力
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 请先说明用户场景，不要只描述按钮或实现。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 范围与取舍
+      description: 哪些内容应该明确不做？

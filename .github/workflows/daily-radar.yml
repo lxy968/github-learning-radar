@@ -1,0 +1,29 @@
+name: Daily GitHub Learning Radar
+
+on:
+  schedule:
+    # 22:00 UTC = 06:00 Asia/Shanghai
+    - cron: "0 22 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-github-learning-radar
+  cancel-in-progress: false
+
+jobs:
+  trigger-daily-radar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger deployed radar cron
+        env:
+          RADAR_CRON_URL: ${{ secrets.RADAR_CRON_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$RADAR_CRON_URL"
+          test -n "$CRON_SECRET"
+          curl --fail --show-error --silent --max-time 15 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$RADAR_CRON_URL"

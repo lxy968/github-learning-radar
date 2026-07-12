@@ -1,0 +1,66 @@
+{
+  "name": "github-learning-radar",
+  "version": "0.1.0",
+  "description": "把 GitHub 开源项目转化为可执行、可验证学习方案的个人学习雷达。",
+  "private": true,
+  "license": "MIT",
+  "keywords": [
+    "github",
+    "learning",
+    "deepseek",
+    "nextjs",
+    "open-source"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "start": "node scripts/production-check.mjs --profile=web && node .next/standalone/server.js",
+    "start:regression": "node .next/standalone/server.js",
+    "build": "next build && node scripts/prepare-standalone.mjs",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:migrate:production": "node scripts/production-check.mjs --profile=migration && tsx scripts/db-migrate.ts",
+    "db:integration": "tsx scripts/postgres-integration.ts",
+    "db:rebuild-radar-projections": "tsx scripts/rebuild-radar-projections.ts",
+    "data:retention": "tsx scripts/data-retention.ts",
+    "repo:hygiene": "tsx scripts/repository-hygiene.ts",
+    "production:check": "node scripts/production-check.mjs",
+    "release:check": "pnpm repo:hygiene -- --strict && pnpm typecheck && pnpm verify && pnpm build",
+    "discovery:dry-run": "tsx scripts/discovery-dry-run.ts",
+    "repository-store:dry-run": "tsx scripts/repository-store-dry-run.ts",
+    "dry-run": "tsx scripts/daily-radar-dry-run.ts",
+    "worker:radar": "tsx scripts/radar-worker.ts",
+    "worker:radar:once": "tsx scripts/radar-worker.ts --once",
+    "regression:http": "tsx scripts/http-regression.ts",
+    "verify": "tsx --no-cache --tsconfig tsconfig.json scripts/verify.ts",
+    "ai:smoke": "tsx scripts/ai-smoke.ts",
+    "test": "pnpm verify"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "4.0.8",
+    "@octokit/rest": "22.0.1",
+    "ai": "7.0.16",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "drizzle-orm": "0.45.2",
+    "lucide-react": "1.23.0",
+    "next": "16.2.10",
+    "postgres": "3.4.9",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "tailwind-merge": "3.6.0",
+    "tsx": "4.23.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.2",
+    "@types/node": "26.1.0",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "tailwindcss": "4.3.2",
+    "typescript": "6.0.3"
+  },
+  "packageManager": "pnpm@11.7.0"
+}

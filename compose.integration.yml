@@ -1,0 +1,46 @@
+name: github-learning-radar-integration
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: radar_integration
+      POSTGRES_USER: radar
+      POSTGRES_PASSWORD: radar_local_integration_only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radar -d radar_integration"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - radar-integration-postgres:/var/lib/postgresql/data
+
+  migrate:
+    build:
+      context: .
+      target: worker
+    environment:
+      DATABASE_URL: postgresql://radar:radar_local_integration_only@postgres:5432/radar_integration
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["pnpm", "db:migrate"]
+
+  integration:
+    build:
+      context: .
+      target: worker
+    environment:
+      DATABASE_URL: postgresql://radar:radar_local_integration_only@postgres:5432/radar_integration
+      ALLOW_POSTGRES_INTEGRATION_TEST: "1"
+      DEEPSEEK_API_KEY: ""
+      GITHUB_TOKEN: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["pnpm", "db:integration"]
+
+volumes:
+  radar-integration-postgres:

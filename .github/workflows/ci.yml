@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm repo:hygiene -- --strict
+      - run: pnpm typecheck
+      - run: pnpm verify
+      - name: Production configuration preflight
+        shell: bash
+        run: |
+          NODE_ENV=production \
+          DATABASE_URL=postgresql://radar@postgres.example.invalid/radar \
+          SITE_URL=https://radar.example.invalid \
+          CRON_SECRET=verification-cron-secret-0000000000000000 \
+          ADMIN_SECRET=verification-admin-secret-000000000000000 \
+          pnpm production:check -- --profile=web
+      - run: pnpm build
+      - name: HTTP regression
+        shell: bash
+        run: |
+          export SITE_URL=https://radar.example.invalid
+          export REGRESSION_EXPECTED_SITE_URL=https://radar.example.invalid
+          HOSTNAME=127.0.0.1 PORT=3000 pnpm start:regression > /tmp/github-learning-radar.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --silent --output /dev/null http://127.0.0.1:3000/api/health; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              cat /tmp/github-learning-radar.log
+              exit 1
+            fi
+            sleep 1
+          done
+          pnpm regression:http
+
+  container-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build production Web image
+        run: docker build --target web -t github-learning-radar-web:ci .
+      - name: Build PostgreSQL integration images
+        run: docker compose -f compose.integration.yml build migrate integration
+      - name: Start isolated PostgreSQL
+        run: docker compose -f compose.integration.yml up -d --wait postgres
+      - name: Apply migrations
+        run: docker compose -f compose.integration.yml run --rm migrate
+      - name: PostgreSQL integration (pnpm db:integration inside container)
+        run: docker compose -f compose.integration.yml run --rm integration
+      - name: Remove integration database
+        if: always()
+        run: docker compose -f compose.integration.yml down --volumes --remove-orphans
