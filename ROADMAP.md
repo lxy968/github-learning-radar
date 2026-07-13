@@ -82,7 +82,7 @@
 - `app/api/jobs/[runId]/route.ts`：按 runId 查询公开安全状态，不返回内部 payload。
 - `scripts/verify.ts`：验证重复入队复用、磁盘持久化、阶段进度、心跳、错误脱敏和 API 查询。
 
-注意：本地没有 `DATABASE_URL`，迁移文件已通过代码/构建检查，但仍需在真实 PostgreSQL 环境执行 `pnpm db:migrate`。
+注意：该轮本地没有 `DATABASE_URL`，迁移当时只通过代码/构建检查；后续已在 8.3 的 GitHub Actions PostgreSQL 16 环境执行迁移与集成验证。
 
 目标：把刷新任务从进程内 Promise 改为数据库可恢复状态。
 
@@ -403,7 +403,7 @@
 - AI 分析和详细学习方案收到显式三态信号；测试状态未知时先要求检查仓库结构，不再直接断言项目没有测试。
 - `scripts/verify.ts` 覆盖旧数据兼容、未知中性评分、明确缺失风险和三态徽标；`pnpm typecheck`、`pnpm verify`、`pnpm build` 通过。
 
-数据库说明：本轮环境未配置 `DATABASE_URL`，因此没有对真实 PostgreSQL 执行迁移；部署或连接数据库后必须运行 `pnpm db:migrate`。
+数据库说明：该轮本地未配置 `DATABASE_URL`；后续已在 8.3 的 GitHub Actions PostgreSQL 16 环境执行迁移与集成验证。
 
 下一步：执行 7.2，将候选池搜索、筛选、排序和分页移到服务端，避免一次加载全部候选数据。
 
@@ -457,7 +457,7 @@
 - 详细方案页面显示学习水平、目标、缓存版本和输入哈希短标识，明确提示缓存校验范围。
 - `scripts/verify.ts` 覆盖确定性、无序输入稳定性、README/水平/目标/provider/model 失效、旧数据不命中、多画像共存和并发去重；`pnpm typecheck`、`pnpm verify`、`pnpm build` 和临时本地服务上的 `pnpm regression:http` 通过。
 
-数据库说明：本轮未配置 `DATABASE_URL`，迁移文件和 SQL 分支已通过类型、构建与静态审查，但仍需在真实 PostgreSQL 执行 `pnpm db:migrate` 后做集成验证。
+数据库说明：该轮本地未配置 `DATABASE_URL`；后续已在 8.3 的 GitHub Actions PostgreSQL 16 环境执行迁移与集成验证。
 
 下一步：执行 7.5，统一 `radar_runs` JSON 与 `repo_scores`、`repo_analyses`、`recommendations` 规范化表的职责，确定单一读取源和重建边界。
 
@@ -475,7 +475,7 @@
 - `pnpm db:rebuild-radar-projections` 可从现有 `radar_runs` 幂等重建全部投影，不调用 GitHub 或 DeepSeek；未配置数据库时安全跳过。
 - `scripts/verify.ts` 覆盖投影行数、模型/来源、版本、输入哈希稳定与失效、重复仓库/rank 拒绝、快照计数不一致和无数据库重建跳过；`pnpm typecheck`、`pnpm verify`、`pnpm build` 和临时本地服务上的 `pnpm regression:http` 通过。
 
-数据库说明：本轮未对真实 PostgreSQL 执行迁移或事务集成测试。部署时必须先运行 `pnpm db:migrate`，再运行 `pnpm db:rebuild-radar-projections`，并核对三类投影每个 run 的行数。
+数据库说明：该轮未对真实 PostgreSQL 执行迁移或事务集成测试；后续 8.3 CI 已覆盖迁移和事务投影集成。正式部署仍必须运行 `pnpm db:migrate` 与 `pnpm db:rebuild-radar-projections`，并核对三类投影每个 run 的行数。
 
 下一步：执行 7.6，为候选仓库、雷达运行、任务运行、详细方案和限流数据增加明确的保留/归档策略与可安全执行的清理命令。
 
@@ -530,7 +530,7 @@
 
 本地完成证据：仅在当前仓库配置 GitHub noreply 作者身份；新增 `.gitattributes` 统一跨平台 LF 并把截图格式声明为二进制。最终索引包含 153 个文件、18,553 行变更；`git diff --cached --check`、敏感路径检查和严格 `scripts/repository-hygiene.ts --strict` 均通过。首个提交为 `7a188bd chore: establish initial project baseline`。
 
-下一步：打开私有仓库的 Actions 页面，观察首次 `CI` 与 `container-integration` 真实结果；失败时先修复并重新推送，通过后再配置分支保护与 Required CI。仓库继续保持 Private，不创建 tag 或 Release。
+下一步：`148d9ff` 对应的 CI #8 已全部通过。按 `RELEASE_CHECKLIST.md` 配置 `main` 分支保护与 Required CI，处理 Dependabot PR 时只合并重新基于最新 `main` 且全部门禁为绿色的更新。仓库继续保持 Private，不创建 tag 或 Release。
 
 ### 8.2 v0.1.0 发布资料准备
 
@@ -553,7 +553,7 @@
 
 ### 8.3 可移植生产部署与 PostgreSQL 集成入口
 
-**状态：代码与自动化入口已完成（2026-07-12）；容器/数据库实跑门禁待外部环境**
+**状态：已完成（2026-07-13，GitHub Actions Docker/PostgreSQL 实跑通过）**
 
 已完成：
 
@@ -574,9 +574,11 @@
 
 尚未完成的门禁：当前机器仍没有 Docker 或 `psql`，因此不能在本机解析/构建镜像、启动真实 PostgreSQL 或执行迁移事务；Git 跟踪与 Private 远端已在 8.1 恢复。容器/PostgreSQL 必须以 GitHub Actions 的真实结果或后续本机 Docker 复跑为准。
 
-2026-07-13 首次真实 CI：`verify` 成功；`container-integration` 已成功构建 Web/Worker 集成镜像并启动 PostgreSQL，但在 `Apply migrations` 失败。日志证明最终 Worker 只复制了 `node_modules`、没有继承 pnpm 内容寻址存储，pnpm 因依赖状态不完整尝试在 `/app` 修复，而非 root `node` 用户按设计拒绝写入。修复后 Worker 直接继承 `worker-dependencies` 阶段，保留完整生产依赖与 pnpm store，并用 `--chown=node:node` 复制运行源码；仓库卫生规则新增对应结构断言。该修复尚待第二次 GitHub Actions 实跑证明。
+2026-07-13 首次真实 CI：`verify` 成功；`container-integration` 已成功构建 Web/Worker 集成镜像并启动 PostgreSQL，但在 `Apply migrations` 失败。日志证明最终 Worker 只复制了 `node_modules`、没有继承 pnpm 内容寻址存储，pnpm 因依赖状态不完整尝试在 `/app` 修复，而非 root `node` 用户按设计拒绝写入。修复后 Worker 直接继承 `worker-dependencies` 阶段，保留完整生产依赖与 pnpm store，并用 `--chown=node:node` 复制运行源码；仓库卫生规则新增对应结构断言。
 
-下一步：推送 Worker 镜像修复并观察第二次 `container-integration`；只有迁移、PostgreSQL 集成和清理全部成功后，才把 8.3 标为完全完成。Docker 环境可用后仍按 [DEPLOYMENT.md](./DEPLOYMENT.md) 本机复跑。随后进入 8.4 预发布部署演练：选择平台、配置最小权限 PostgreSQL/Web/Worker/Cron、执行迁移与回滚演练，并核对生产健康检查。
+通过证据：修复提交 `148d9ff` 对应的 CI #8 在 1 分 28 秒内整体成功，证明 `verify`、Web/Worker 镜像构建、PostgreSQL 16 健康启动、迁移、`pnpm db:integration` 与清理全部通过；Compose 没有注入 GitHub 或 DeepSeek 密钥，因此未产生外部 API 或模型 Token。当前机器仍无 Docker，本机复跑保留为环境补充证据，不再阻塞 8.3。
+
+下一步：进入 6.4 剩余人工键盘/屏幕阅读器/独立会话门禁，并配置 GitHub `main` 分支保护；两者完成后选择预发布 Web/Worker/PostgreSQL 平台，执行 8.4 真实云资源演练。
 
 ### 8.4 预发布配置、最小权限与故障演练基线
 
@@ -635,6 +637,6 @@ pnpm db:migrate:production
 
 ## 十、当前下一步
 
-下一次继续开发时先读取 [RELEASE_READINESS.md](./RELEASE_READINESS.md)，只选择已经具备外部条件的第一项：Git/CI、Docker/PostgreSQL、浏览器剩余人工/独立会话证据或预发布平台。没有条件变化时不要重复同一失败尝试。
+Git/Private GitHub、严格仓库门禁、真实 CI 与 Docker/PostgreSQL 集成已经通过。当前恢复顺序中的第一项是完成 6.4 剩余人工键盘、屏幕阅读器、断网和独立双会话证据；同时配置 `main` 分支保护与 Required CI。完成后再选择预发布平台、数据库和域名。
 
-4.1–4.4、5.2–5.3、6.1–6.3、7.1–7.6、8.2 和 8.5 已完成；8.3 的容器/数据库入口和 8.4 的平台无关预发布基线已完成但缺真实基础设施证据；6.4 已取得真实多视口/交互的部分证据但仍缺实际键盘、屏幕阅读器、断网和独立双会话，8.1 仍缺 Git 跟踪审计。完整阻塞矩阵见 `RELEASE_READINESS.md`。
+4.1–4.4、5.2–5.3、6.1–6.3、7.1–7.6、8.2、8.3 和 8.5 已完成；8.1 的本地跟踪/Private 推送/CI 已完成但 GitHub 保护设置待配置；8.4 的平台无关基线已完成但缺真实云资源演练；6.4 已取得真实多视口/交互的部分证据但仍缺实际键盘、屏幕阅读器、断网和独立双会话。完整阻塞矩阵见 `RELEASE_READINESS.md`。

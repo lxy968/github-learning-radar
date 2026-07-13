@@ -16,6 +16,8 @@
 | DeepSeek fallback | 未配置/失败时规则 fallback、调用轨迹和 Token 处理已有自动化测试 | 通过（无真实模型调用） |
 | PostgreSQL 防误操作 | 集成脚本需要显式确认并限制测试数据库名；无确认时在连接前拒绝 | 通过 |
 | 真实浏览器（部分） | 内置浏览器已恢复；390/768/1440 首页、404、规则学习方案、步骤刷新保持、焦点环和控制台已实跑，截图位于 `artifacts/release-readiness/browser-6.4/` | 条件通过；键盘事件、屏幕阅读器、断网和独立双会话仍待补 |
+| GitHub CI | Private 仓库提交 `148d9ff` 的 CI #8 整体成功；`verify` 与 `container-integration` 均为绿色 | 通过 |
+| Docker/PostgreSQL 集成 | GitHub Actions 构建 Web/Worker 镜像，启动 PostgreSQL 16，完成迁移、事务投影/缓存/并发领取集成和清理；未注入 GitHub/DeepSeek Secret | 通过（CI 环境） |
 
 这些证据不能替代下表的真实工具、浏览器、数据库和云资源验证。
 
@@ -24,9 +26,7 @@
 | 发布门禁 | 当前状态 | 需要的权威证据 | 恢复条件/入口 |
 | --- | --- | --- | --- |
 | 真实浏览器 6.4 | 运行时已恢复；390/768/1440、移动/桌面导航、404、规则方案、步骤刷新保持、焦点环和无控制台错误已通过。自动化 Tab/Enter 未产生原生事件，新标签页共享同一 Cookie 上下文 | 实际 Tab/Enter/Space 与屏幕阅读器、断网恢复、两套独立浏览器 Cookie 隔离证据 | 使用可注入真实键盘事件且支持第二隔离上下文的浏览器，或由维护者完成人工回归；不重复已通过的截图/布局检查 |
-| Docker 镜像 | 首次 GitHub Actions 已构建 Web/Worker 集成镜像并启动 PostgreSQL；迁移容器因 Worker 未保留 pnpm store 而失败，非 root 用户正确阻止运行时修复。Dockerfile 已改为继承完整依赖阶段，待 CI 重跑 | 修复后 Web/Worker target 构建、非 root 迁移和完整集成成功日志 | 推送修复并观察 `container-integration`；本机有 Docker 后再复跑 `compose.integration.yml` |
-| 真实 PostgreSQL | GitHub Actions 中 PostgreSQL 16 已真实启动并通过健康依赖，但迁移尚未执行，后续集成步骤被跳过 | 迁移 0001–0013、事务投影、并发领取、投影重建、保留 dry-run | Worker 镜像修复后的 CI 必须完成 migrate 与 `pnpm db:integration` |
-| GitHub 仓库设置 | Private 仓库 `lxy968/github-learning-radar` 已推送；首次 `verify` 成功，`container-integration` 在迁移容器失败并已定位修复；仓库安全设置尚未核对 | 修复后的完整 CI、分支保护、Required CI、Dependabot、Secret Scanning、Issue/PR 模板页面 | 推送 Worker 镜像修复；完整 CI 通过后按 `RELEASE_CHECKLIST.md` 配置保护规则，仓库继续保持 Private |
+| GitHub 仓库设置 | Private 仓库已推送，提交 `148d9ff` 的完整 CI 通过；Dependabot 已创建升级 PR，但分支保护与安全设置尚未核对 | 分支保护、Required CI、Dependabot 绿色更新、Secret Scanning、Issue/PR 模板页面 | 按 `RELEASE_CHECKLIST.md` 配置保护规则；红色 Dependabot PR 不合并，仓库继续保持 Private |
 | GitHub discovery smoke | 普通 CI 不调用外部 API | 受控调用次数、限流、耗时、候选数量和脱敏日志 | 在预览 Worker 使用最小权限 Token 手动运行一次 |
 | DeepSeek smoke | 为避免费用未执行 | provider、模型、耗时、成功/fallback 和 provider 返回 Token | 受控环境运行一次 `pnpm ai:smoke`；不进入普通 CI |
 | 预发布部署 | 平台、PostgreSQL、域名和 Secret 未确定 | HTTPS 站点、Web/Worker/Cron、`status: ok`/`storage: postgres` | 选择平台后执行 `DEPLOYMENT.md` 与 `OPERATIONS.md` |
@@ -35,9 +35,9 @@
 
 ## 恢复顺序
 
-1. 先恢复 Git/GitHub 环境，执行严格仓库门禁并触发 CI。
-2. 用 CI 或本机 Docker 完成镜像与 PostgreSQL 集成；失败时先修 8.3，不进入云部署。
-3. 恢复真实浏览器，完成 6.4 多视口、键盘和双会话回归。
+1. Git/GitHub、严格仓库门禁与真实 CI 已完成；继续保留 `main` 保护规则配置。
+2. GitHub Actions Docker/PostgreSQL 集成已完成；本机 Docker 复跑为可选补充证据。
+3. 当前先完成 6.4 剩余实际键盘、屏幕阅读器、断网和独立双会话回归。
 4. 选择预发布平台、数据库和域名，按 `OPERATIONS.md` 完成最小权限、迁移、健康、Worker/Cron、备份与回滚。
 5. 最后执行受控 GitHub/DeepSeek smoke，补真实截图、URL、tag 和 Release。
 
