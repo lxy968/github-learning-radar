@@ -24,9 +24,9 @@
 | 发布门禁 | 当前状态 | 需要的权威证据 | 恢复条件/入口 |
 | --- | --- | --- | --- |
 | 真实浏览器 6.4 | 运行时已恢复；390/768/1440、移动/桌面导航、404、规则方案、步骤刷新保持、焦点环和无控制台错误已通过。自动化 Tab/Enter 未产生原生事件，新标签页共享同一 Cookie 上下文 | 实际 Tab/Enter/Space 与屏幕阅读器、断网恢复、两套独立浏览器 Cookie 隔离证据 | 使用可注入真实键盘事件且支持第二隔离上下文的浏览器，或由维护者完成人工回归；不重复已通过的截图/布局检查 |
-| Docker 镜像 | 当前系统无 Docker | Web/Worker target 构建日志、非 root 进程、镜像内容和健康检查 | Docker 或 GitHub Actions 的 `container-integration` |
-| 真实 PostgreSQL | 当前系统无 Docker、`psql`、`DATABASE_URL` | 迁移 0001–0013、事务投影、并发领取、投影重建、保留 dry-run | 隔离测试库运行 `compose.integration.yml` 与数据库命令 |
-| GitHub 仓库设置 | Private 仓库 `lxy968/github-learning-radar` 已首次推送，`origin/main` 与本地提交一致；真实 CI 与仓库安全设置尚未核对 | CI 结果、分支保护、Required CI、Dependabot、Secret Scanning、Issue/PR 模板页面 | 在 Actions 页面观察首次工作流；通过后按 `RELEASE_CHECKLIST.md` 配置保护规则，仓库继续保持 Private |
+| Docker 镜像 | 首次 GitHub Actions 已构建 Web/Worker 集成镜像并启动 PostgreSQL；迁移容器因 Worker 未保留 pnpm store 而失败，非 root 用户正确阻止运行时修复。Dockerfile 已改为继承完整依赖阶段，待 CI 重跑 | 修复后 Web/Worker target 构建、非 root 迁移和完整集成成功日志 | 推送修复并观察 `container-integration`；本机有 Docker 后再复跑 `compose.integration.yml` |
+| 真实 PostgreSQL | GitHub Actions 中 PostgreSQL 16 已真实启动并通过健康依赖，但迁移尚未执行，后续集成步骤被跳过 | 迁移 0001–0013、事务投影、并发领取、投影重建、保留 dry-run | Worker 镜像修复后的 CI 必须完成 migrate 与 `pnpm db:integration` |
+| GitHub 仓库设置 | Private 仓库 `lxy968/github-learning-radar` 已推送；首次 `verify` 成功，`container-integration` 在迁移容器失败并已定位修复；仓库安全设置尚未核对 | 修复后的完整 CI、分支保护、Required CI、Dependabot、Secret Scanning、Issue/PR 模板页面 | 推送 Worker 镜像修复；完整 CI 通过后按 `RELEASE_CHECKLIST.md` 配置保护规则，仓库继续保持 Private |
 | GitHub discovery smoke | 普通 CI 不调用外部 API | 受控调用次数、限流、耗时、候选数量和脱敏日志 | 在预览 Worker 使用最小权限 Token 手动运行一次 |
 | DeepSeek smoke | 为避免费用未执行 | provider、模型、耗时、成功/fallback 和 provider 返回 Token | 受控环境运行一次 `pnpm ai:smoke`；不进入普通 CI |
 | 预发布部署 | 平台、PostgreSQL、域名和 Secret 未确定 | HTTPS 站点、Web/Worker/Cron、`status: ok`/`storage: postgres` | 选择平台后执行 `DEPLOYMENT.md` 与 `OPERATIONS.md` |

@@ -158,6 +158,7 @@ async function verifyContainerArtifacts() {
   for (const marker of [
     "AS web",
     "AS worker",
+    "FROM worker-dependencies AS worker",
     "USER node",
     "HEALTHCHECK",
     "production-check.mjs --profile=web",

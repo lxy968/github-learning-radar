@@ -1,6 +1,6 @@
 # GitHub 学习雷达推进路线
 
-> 更新时间：2026-07-12
+> 更新时间：2026-07-13
 > 用途：作为后续模型和开发者的单一推进依据。开始新阶段前先阅读本文，不要仅凭文件存在判断功能完成。
 
 ## 一、产品目标
@@ -572,9 +572,11 @@
 - standalone 服务启动后的完整 `scripts/http-regression.ts` 通过。
 - 集成安全规则测试确认：测试库 + 显式确认可进入，生产命名数据库或缺少确认会在连接前被拒绝。
 
-尚未完成的门禁：当前机器没有 Docker、`psql` 或 Git，因此不能在本机解析/构建镜像、启动真实 PostgreSQL、执行迁移事务或验证 Git 跟踪状态。新增 GitHub Actions 任务也尚未在真实仓库运行，不能把“已配置”记成“已通过”。
+尚未完成的门禁：当前机器仍没有 Docker 或 `psql`，因此不能在本机解析/构建镜像、启动真实 PostgreSQL 或执行迁移事务；Git 跟踪与 Private 远端已在 8.1 恢复。容器/PostgreSQL 必须以 GitHub Actions 的真实结果或后续本机 Docker 复跑为准。
 
-下一步：Git/GitHub 环境可用后先运行 CI 的 `container-integration` 并保存结果；Docker 环境可用后按 [DEPLOYMENT.md](./DEPLOYMENT.md) 本机复跑。两者至少一处取得真实 PostgreSQL 成功证据后，才把 8.3 标为完全完成。随后进入 8.4 预发布部署演练：选择平台、配置最小权限 PostgreSQL/Web/Worker/Cron、执行迁移与回滚演练，并核对生产健康检查。
+2026-07-13 首次真实 CI：`verify` 成功；`container-integration` 已成功构建 Web/Worker 集成镜像并启动 PostgreSQL，但在 `Apply migrations` 失败。日志证明最终 Worker 只复制了 `node_modules`、没有继承 pnpm 内容寻址存储，pnpm 因依赖状态不完整尝试在 `/app` 修复，而非 root `node` 用户按设计拒绝写入。修复后 Worker 直接继承 `worker-dependencies` 阶段，保留完整生产依赖与 pnpm store，并用 `--chown=node:node` 复制运行源码；仓库卫生规则新增对应结构断言。该修复尚待第二次 GitHub Actions 实跑证明。
+
+下一步：推送 Worker 镜像修复并观察第二次 `container-integration`；只有迁移、PostgreSQL 集成和清理全部成功后，才把 8.3 标为完全完成。Docker 环境可用后仍按 [DEPLOYMENT.md](./DEPLOYMENT.md) 本机复跑。随后进入 8.4 预发布部署演练：选择平台、配置最小权限 PostgreSQL/Web/Worker/Cron、执行迁移与回滚演练，并核对生产健康检查。
 
 ### 8.4 预发布配置、最小权限与故障演练基线
 

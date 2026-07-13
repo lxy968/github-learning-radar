@@ -34,14 +34,12 @@ FROM base AS worker-dependencies
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --prod --frozen-lockfile
 
-FROM base AS worker
+FROM worker-dependencies AS worker
 ENV NODE_ENV=production
 WORKDIR /app
-COPY --from=worker-dependencies /app/node_modules ./node_modules
-COPY --from=worker-dependencies /app/package.json ./package.json
-COPY lib ./lib
-COPY migrations ./migrations
-COPY scripts ./scripts
-COPY tsconfig.json ./tsconfig.json
+COPY --chown=node:node lib ./lib
+COPY --chown=node:node migrations ./migrations
+COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node tsconfig.json ./tsconfig.json
 USER node
 CMD ["sh", "-c", "node scripts/production-check.mjs --profile=worker && exec pnpm worker:radar"]
