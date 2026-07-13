@@ -312,6 +312,9 @@ function verifyWorkflows() {
   for (const marker of [
     "permissions:",
     "contents: read",
+    "actions/checkout@v7",
+    "pnpm/action-setup@v4.4.0",
+    "actions/setup-node@v6",
     "pnpm install --frozen-lockfile",
     "pnpm repo:hygiene -- --strict",
     "pnpm typecheck",

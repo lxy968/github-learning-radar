@@ -513,7 +513,7 @@
 
 ### 8.1 开源发布前仓库卫生检查
 
-**状态：本地 Git 跟踪与 Private 仓库首次推送已完成；真实 CI 待确认（2026-07-12）**
+**状态：本地 Git 跟踪、Private 仓库推送与真实 CI 已完成；GitHub 保护设置待配置（2026-07-13）**
 
 已完成：
 
@@ -530,7 +530,9 @@
 
 本地完成证据：仅在当前仓库配置 GitHub noreply 作者身份；新增 `.gitattributes` 统一跨平台 LF 并把截图格式声明为二进制。最终索引包含 153 个文件、18,553 行变更；`git diff --cached --check`、敏感路径检查和严格 `scripts/repository-hygiene.ts --strict` 均通过。首个提交为 `7a188bd chore: establish initial project baseline`。
 
-下一步：`148d9ff` 对应的 CI #8 已全部通过。按 `RELEASE_CHECKLIST.md` 配置 `main` 分支保护与 Required CI，处理 Dependabot PR 时只合并重新基于最新 `main` 且全部门禁为绿色的更新。仓库继续保持 Private，不创建 tag 或 Release。
+2026-07-13 CI 运行时维护：把工作流升级到 `actions/checkout@v7`、`actions/setup-node@v6` 和 `pnpm/action-setup@v4.4.0`，避免继续依赖 GitHub Actions 已提示弃用的 Node.js 20 运行时；仓库卫生脚本固定检查这三个版本。本地在清空 DeepSeek/OpenAI 密钥后，类型检查、逻辑验证、严格仓库卫生、生产构建和独立端口 HTTP 回归全部通过；本次工作流变更的 GitHub 远程运行结果将在推送后单独确认，不用本地结果冒充远程证据。
+
+下一步：`148d9ff` 对应的 CI #8 已全部通过；先确认本次 Actions 运行时升级对应的远程 CI，再按 `RELEASE_CHECKLIST.md` 配置 `main` 分支保护与 Required CI。处理 Dependabot PR 时只合并重新基于最新 `main` 且全部门禁为绿色的更新。仓库继续保持 Private，不创建 tag 或 Release。
 
 ### 8.2 v0.1.0 发布资料准备
 
