@@ -6,7 +6,6 @@ import {
   Compass,
   FolderSearch2,
   Heart,
-  Library,
   Settings,
   Sparkles
 } from "lucide-react";
@@ -22,7 +21,6 @@ export const primaryNavItems = [
 
 export const exploreNavItems = [
   { href: "/candidates", label: "候选项目", icon: Compass, matches: ["/candidates"] },
-  { href: "/library", label: "项目库", icon: Library, matches: ["/library"] },
   { href: "/history", label: "运行历史", icon: CalendarDays, matches: ["/history"] }
 ] as const;
 

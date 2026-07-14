@@ -3,6 +3,7 @@ import { ArrowRight, ArrowUpRight, Clock3, GitFork, Star } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { FeedbackControls } from "@/components/feedback-controls";
 import { ScoreBars } from "@/components/score-bars";
+import { sanitizeReadmeExcerpt } from "@/lib/readme";
 import { formatNumber } from "@/lib/utils";
 import type { RadarRecommendation } from "@/lib/types";
 
@@ -18,6 +19,8 @@ export function RecommendationCard({
   const projectHref = `/projects/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
   const learningHref = `${projectHref}/learning-plan`;
   const coreFeatures = analysis.miniCloneScope.coreFeatures.slice(0, 3);
+  const learningReasons = (analysis.whyLearn.length > 0 ? analysis.whyLearn : score.reasons).slice(0, 2);
+  const fullReasons = Array.from(new Set([...analysis.whyLearn, ...score.reasons]));
 
   return (
     <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:p-6">
@@ -32,10 +35,10 @@ export function RecommendationCard({
             {item.analysisTrace ? (
               <Badge tone={item.analysisTrace.source === "ai" ? "blue" : "neutral"}>
                 {item.analysisTrace.source === "ai"
-                  ? "DeepSeek 分析"
+                  ? "智能分析"
                   : item.analysisTrace.source === "seed"
-                    ? "Seed 分析"
-                    : "规则分析"}
+                    ? "示例分析"
+                    : "内置规则分析"}
               </Badge>
             ) : null}
           </div>
@@ -44,7 +47,7 @@ export function RecommendationCard({
               {repo.fullName}
             </Link>
           </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{makeChineseSummary(item)}</p>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{projectSummary(item)}</p>
         </div>
         <div className="flex shrink-0 items-center gap-4 text-xs font-medium text-slate-500 sm:pt-1">
           <span className="inline-flex items-center gap-1.5">
@@ -60,7 +63,7 @@ export function RecommendationCard({
         <section className="rounded-lg bg-teal-50/80 p-4">
           <div className="text-xs font-semibold text-teal-700">为什么推荐</div>
           <ul className="mt-2 grid gap-2 text-sm leading-6 text-teal-950">
-            {score.reasons.slice(0, 2).map((reason) => (
+            {learningReasons.map((reason) => (
               <li key={reason} className="flex gap-2">
                 <span aria-hidden="true" className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-teal-600" />
                 <span>{reason}</span>
@@ -118,18 +121,19 @@ export function RecommendationCard({
 
       <details className="mt-4 border-t border-slate-100 pt-3 text-sm">
         <summary className="focus-ring cursor-pointer rounded-sm py-1 font-medium text-slate-500 hover:text-slate-800">
-          查看原始简介、完整理由与五维评分
+          查看 README 摘录、完整推荐依据与评分
         </summary>
         <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_260px]">
           <div className="grid gap-4">
             <div>
-              <div className="text-xs font-semibold text-slate-500">原始简介</div>
+              <div className="text-xs font-semibold text-slate-500">README 清洗摘录</div>
+              <div className="mt-1 text-xs text-slate-400">已隐藏徽章、图片地址和冗长链接</div>
               <p className="mt-1 text-sm leading-6 text-slate-700">{summarizeProject(item)}</p>
             </div>
             <div>
               <div className="text-xs font-semibold text-slate-500">完整推荐依据</div>
               <ul className="mt-2 grid gap-2 sm:grid-cols-2">
-                {score.reasons.map((reason) => (
+                {fullReasons.map((reason) => (
                   <li key={reason} className="rounded-md bg-slate-50 px-3 py-2 text-slate-600">
                     {reason}
                   </li>
@@ -152,46 +156,21 @@ export function RecommendationCard({
 
 function summarizeProject(item: RadarRecommendation) {
   const source = item.repo.readmeExcerpt || item.repo.description || item.analysis.oneLineSummary;
-  return truncateText(source.replace(/\s+/g, " ").trim(), 260);
+  return truncateText(sanitizeReadmeExcerpt(source, 500), 320);
 }
 
-function makeChineseSummary(item: RadarRecommendation) {
-  const { repo, analysis } = item;
-  const features = analysis.miniCloneScope.coreFeatures.slice(0, 2).join("、");
-  const projectType = translateProjectType(analysis.projectType) || translateCategory(repo.category);
-  return features
-    ? `一个面向${projectType}场景的 ${repo.primaryLanguage} 项目，核心能力是${features}。`
-    : `一个适合拆解真实工程结构和复刻路径的 ${repo.primaryLanguage} ${projectType}项目。`;
+function projectSummary(item: RadarRecommendation) {
+  const summary = sanitizeReadmeExcerpt(item.analysis.oneLineSummary, 220);
+  if (summary) return truncateText(summary, 180);
+
+  const fallback = sanitizeReadmeExcerpt(item.repo.description || item.repo.readmeExcerpt, 220);
+  return fallback || `${item.repo.fullName} 的项目证据不足，需要先查看 README 再确定学习范围。`;
 }
 
 function effortLabel(difficulty: string) {
   if (difficulty === "beginner") return "建议 3 天起步";
   if (difficulty === "advanced") return "建议 14 天拆解";
   return "建议 7 天完成";
-}
-
-function translateProjectType(value: string) {
-  const normalized = value.toLowerCase();
-  if (normalized.includes("developer")) return "开发者工具";
-  if (normalized.includes("database")) return "数据库";
-  if (normalized.includes("cli")) return "命令行工具";
-  if (normalized.includes("ai")) return "AI 应用";
-  if (normalized.includes("full")) return "全栈应用";
-  return "开源应用";
-}
-
-function translateCategory(value: string) {
-  const labels: Record<string, string> = {
-    "ai-app": "AI 应用",
-    frontend: "前端",
-    backend: "后端",
-    devtool: "开发者工具",
-    database: "数据库",
-    automation: "自动化",
-    cli: "命令行工具",
-    fullstack: "全栈应用"
-  };
-  return labels[value] ?? "开源";
 }
 
 function truncateText(value: string, maxLength: number) {

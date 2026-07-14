@@ -1,6 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { generateDetailedStudyPlan } from "@/lib/ai/detailed-study-plan";
+import { extendDetailedStudyPlan, generateDetailedStudyPlan } from "@/lib/ai/detailed-study-plan";
 import { getSqlClient } from "@/lib/db/client";
 import {
   buildDetailedStudyPlanCacheMetadata,
@@ -22,6 +22,12 @@ type DetailedStudyPlanStore = {
 type GeneratePlan = (
   recommendation: RadarRecommendation,
   duration: DetailedStudyPlanDuration,
+  context: DetailedStudyPlanGenerationContext
+) => Promise<DetailedStudyPlan>;
+
+type ExtendPlan = (
+  recommendation: RadarRecommendation,
+  existingPlan: DetailedStudyPlan,
   context: DetailedStudyPlanGenerationContext
 ) => Promise<DetailedStudyPlan>;
 
@@ -59,11 +65,13 @@ export async function getOrCreateDetailedStudyPlan(
   options: {
     preference: Pick<UserPreference, "level" | "goal">;
     force?: boolean;
+    extend?: boolean;
     generate?: GeneratePlan;
+    extendPlan?: ExtendPlan;
   }
 ) {
   const context = createDetailedStudyPlanGenerationContext(recommendation, duration, options.preference);
-  const generationKey = context.cache.key;
+  const generationKey = `${context.cache.key}:${options.extend ? "extend" : "initial"}`;
   const existingGeneration = activeGenerations.get(generationKey);
   if (existingGeneration) return existingGeneration;
 
@@ -84,9 +92,23 @@ async function createOrReusePlan(
   options: {
     preference: Pick<UserPreference, "level" | "goal">;
     force?: boolean;
+    extend?: boolean;
     generate?: GeneratePlan;
+    extendPlan?: ExtendPlan;
   }
 ) {
+  if (options.extend) {
+    const cached = await findPlanByCacheKey(recommendation.repo.id, context.cache.key);
+    if (!cached) throw new Error("还没有可以继续生成的学习方案，请先生成第一阶段。");
+    if ((cached.generatedThroughDay ?? cached.days.length) >= duration) return { plan: cached, cached: true };
+
+    const extendPlan = options.extendPlan ?? extendDetailedStudyPlan;
+    const extended = await extendPlan(recommendation, cached, context);
+    const plan = { ...extended, cache: context.cache };
+    await saveDetailedStudyPlan(plan);
+    return { plan, cached: false };
+  }
+
   if (!options.force) {
     const cached = await findPlanByCacheKey(recommendation.repo.id, context.cache.key);
     if (cached) return { plan: cached, cached: true };
@@ -221,8 +243,12 @@ async function readStore(): Promise<DetailedStudyPlanStore> {
 }
 
 function normalizeStoredPlan(plan: DetailedStudyPlan): DetailedStudyPlan {
+  const generatedThroughDay = plan.generatedThroughDay ?? Math.max(0, ...plan.days.map((day) => day.day));
   return {
     ...plan,
+    generatedThroughDay,
+    generationStatus: generatedThroughDay >= plan.duration ? "complete" : "partial",
+    glossary: Array.isArray(plan.glossary) ? plan.glossary : [],
     providerAttempts: Array.isArray(plan.providerAttempts) ? plan.providerAttempts : [],
     cache:
       plan.cache && typeof plan.cache.key === "string" && typeof plan.cache.inputHash === "string"

@@ -1,14 +1,22 @@
-import { generateText } from "ai";
+import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getConfiguredAiModel, type AiModelConfig } from "@/lib/ai/provider";
 import { classifyOperationalError } from "@/lib/operational-errors";
 import { getRepoSignal } from "@/lib/repository-signals";
 import { sanitizeReadmeExcerpt } from "@/lib/readme";
-import { seedAnalyses } from "@/lib/seed-data";
-import type { AiProviderAttempt, RepoAnalysis, RepoSnapshot, RuleScore, UserPreference } from "@/lib/types";
+import { getLearnerCommunicationGuidance } from "@/lib/learning-language";
+import { defaultPreference, seedAnalyses } from "@/lib/seed-data";
+import type {
+  AiProviderAttempt,
+  RadarRecommendation,
+  RepoAnalysis,
+  RepoSnapshot,
+  RuleScore,
+  UserPreference
+} from "@/lib/types";
 
-export const repositoryAnalysisPromptVersion = "radar-analysis-prompt-v1";
-export const repositoryAnalysisSchemaVersion = "radar-analysis-schema-v1";
+export const repositoryAnalysisPromptVersion = "radar-analysis-prompt-v3";
+export const repositoryAnalysisSchemaVersion = "radar-analysis-schema-v2";
 
 const planDaySchema = z.object({
   day: z.number(),
@@ -18,15 +26,15 @@ const planDaySchema = z.object({
 });
 
 const repoAnalysisFields = {
-  projectType: z.string(),
-  oneLineSummary: z.string(),
-  learningTags: z.array(z.string()).min(2).max(8),
+  projectType: z.string().min(2).max(60),
+  oneLineSummary: z.string().min(12).max(180),
+  learningTags: z.array(z.string().min(1).max(40)).min(2).max(8),
   difficulty: z.enum(["beginner", "intermediate", "advanced"]),
-  whyLearn: z.array(z.string()).min(2).max(5),
+  whyLearn: z.array(z.string().min(6).max(120)).min(2).max(5),
   miniCloneScope: z.object({
-    goal: z.string(),
-    coreFeatures: z.array(z.string()).min(2).max(6),
-    excludedFeatures: z.array(z.string()).min(1).max(6)
+    goal: z.string().min(12).max(220),
+    coreFeatures: z.array(z.string().min(2).max(60)).min(2).max(6),
+    excludedFeatures: z.array(z.string().min(2).max(80)).min(1).max(6)
   }),
   recommendedFor: z.array(z.string()).min(1).max(5),
   notRecommendedFor: z.array(z.string()).min(1).max(5),
@@ -83,7 +91,7 @@ export async function analyzeRepositoryWithFallback(
   preference: UserPreference
 ): Promise<RepositoryAnalysisResult> {
   const fallback = getFallbackAnalysis(repo, score, preference);
-  const configuredModel = getConfiguredAiModel();
+  const configuredModel = getConfiguredAiModel("radar-analysis");
 
   if (!configuredModel) {
     return {
@@ -155,14 +163,16 @@ async function generateDeepSeekJsonAnalysis(
   preference: UserPreference,
   abortSignal: AbortSignal
 ) {
-  const { text, usage } = await generateText({
+  const { output, usage } = await generateText({
     model,
     abortSignal,
     maxRetries: 2,
+    maxOutputTokens: 1800,
+    output: Output.json(),
     temperature: 0.2,
     prompt: [
       ...buildAnalysisPrompt(repo, score, preference),
-      "DeepSeek 当前不使用 response_format。你必须只返回一个 JSON 对象。",
+      "API 已启用 JSON Output。你必须只返回一个 JSON 对象。",
       "不要输出 Markdown，不要输出代码围栏，不要输出解释文字。",
       "JSON 字段必须完全符合这个结构：",
       JSON.stringify({
@@ -186,8 +196,7 @@ async function generateDeepSeekJsonAnalysis(
       })
     ].join("\n")
   });
-  const jsonText = extractJsonObject(text);
-  const parsed = aiRepoAnalysisSchema.safeParse(JSON.parse(jsonText));
+  const parsed = aiRepoAnalysisSchema.safeParse(output);
 
   if (!parsed.success) {
     throw new Error(`AI JSON validation failed: ${summarizeZodIssues(parsed.error.issues)}`);
@@ -212,7 +221,7 @@ function buildAnalysisPrompt(repo: RepoSnapshot, score: RuleScore, preference: U
     description: truncate(repo.description, 500),
     topics: repo.topics.slice(0, 12),
     languages: repo.languages.slice(0, 8),
-    readmeExcerpt: sanitizeReadmeExcerpt(repo.readmeExcerpt, 900),
+    readmeExcerpt: sanitizeReadmeExcerpt(repo.readmeExcerpt, 1400),
     detectedFiles: repo.detectedFiles.slice(0, 40),
     dependencies: repo.dependencies.slice(0, 16),
     enrichment: {
@@ -229,8 +238,14 @@ function buildAnalysisPrompt(repo: RepoSnapshot, score: RuleScore, preference: U
   return [
     "你是 GitHub 学习雷达的项目分析器。",
     "只能使用给定 JSON 输入，不允许浏览网页，不允许补充外部事实。",
-    "输出必须严格符合 schema，3 天学习路线必须围绕 mini 复刻，任务要具体、可执行、适合个人练习。",
-    "请优先解释这个仓库为什么值得学习、如何裁剪复刻、以及 3 天内怎么推进。",
+    "所有面向用户的内容使用简洁中文，输出必须严格符合 schema。",
+    ...getLearnerCommunicationGuidance(preference.level),
+    "oneLineSummary 必须回答这个仓库具体解决什么问题、主要输入或操作是什么、会得到什么结果；不得只改写语言、类别和标签。",
+    "whyLearn 每一项必须指出这个仓库特有的技术、文件信号或可练习能力，不得使用‘工程结构较好’之类无法验证的空话。",
+    "miniCloneScope.goal 必须说明 mini 版本的用户输入、核心处理和可观察输出，并明确缩小后的边界。",
+    "coreFeatures 使用仓库特有的模块或能力名称。除非输入证据明确支持，否则禁止使用‘核心输入表单或配置’、‘主处理流程’、‘结果展示’这类通用占位词。",
+    "证据不足时明确写‘需要先确认’，降低 confidence，不得猜测仓库不存在的功能或文件。",
+    "3 天学习路线必须围绕该仓库的 mini 复刻，任务要具体、可执行、适合个人练习。",
     JSON.stringify({
       promptVersion: repositoryAnalysisPromptVersion,
       schemaVersion: repositoryAnalysisSchemaVersion,
@@ -258,30 +273,6 @@ function expandAiAnalysis(repo: RepoSnapshot, object: z.infer<typeof aiRepoAnaly
   };
 }
 
-function extractJsonObject(text: string) {
-  const trimmed = text.trim();
-
-  try {
-    JSON.parse(trimmed);
-    return trimmed;
-  } catch {
-    // Continue with tolerant extraction below.
-  }
-
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) {
-    return fenced[1].trim();
-  }
-
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    return trimmed.slice(start, end + 1);
-  }
-
-  throw new Error("AI did not return a JSON object");
-}
-
 function getFallbackAnalysis(repo: RepoSnapshot, score: RuleScore, preference: UserPreference) {
   const seedFallback = seedAnalyses.find((analysis) => analysis.repoId === repo.id);
 
@@ -306,26 +297,30 @@ export function createRuleBasedAnalysis(
   const difficulty = repo.sizeKb > 40000 || repo.primaryLanguage === "Rust" ? "advanced" : "intermediate";
   const topicTags = repo.topics.slice(0, 4);
   const projectType = inferProjectType(repo);
-  const cloneGoal = `复刻一个 ${repo.name} lite，保留最能体现 ${repo.primaryLanguage} 和 ${repo.category} 学习价值的核心流程。`;
+  const coreFeatures = inferRuleCoreFeatures(repo);
+  const cloneGoal = `制作 ${repo.name}-lite：实现“${coreFeatures[0]}”，再接通“${coreFeatures[1]}”与“${coreFeatures[2]}”，形成可以运行和验证的最小闭环。`;
 
   return {
     repoId: repo.id,
     projectType,
-    oneLineSummary: `适合围绕 ${repo.primaryLanguage} / ${topicTags.join(", ") || repo.category} 做 mini 复刻，当前规则分 ${score.finalScore}。`,
+    oneLineSummary: `${repo.name} 主要围绕“${coreFeatures[0]}”和“${coreFeatures[1]}”展开，可用 ${repo.primaryLanguage} 复现从操作入口到可验证结果的最小路径。`,
     learningTags: Array.from(new Set([repo.primaryLanguage, ...topicTags])).slice(0, 6),
     difficulty,
     whyLearn: [
-      score.reasons[0] ?? "命中今日学习雷达规则",
+      `可以练习“${coreFeatures[0]}”与“${coreFeatures[1]}”之间的真实衔接`,
+      score.reasons[0] ?? `仓库主题和 ${repo.primaryLanguage} 技术栈符合当前雷达规则`,
       getRepoSignal(repo, "examples") === "present"
-        ? "仓库包含示例，适合裁剪学习"
+        ? "仓库包含示例，可以先复现再缩小为个人版本"
         : getRepoSignal(repo, "examples") === "absent"
           ? "已检查但未发现示例，需要从 README 和目录结构提炼核心流程"
-          : "示例抓取状态未知，进入仓库后先确认再确定复刻路径",
-      preference.languages.includes(repo.primaryLanguage) ? "命中你的语言偏好" : "可扩展你的技术视野"
+          : "示例抓取状态未知，需要先确认入口和示例再确定复刻路径",
+      preference.languages.includes(repo.primaryLanguage)
+        ? `${repo.primaryLanguage} 与你的语言偏好一致`
+        : `可以借此补充 ${repo.primaryLanguage} 项目经验`
     ],
     miniCloneScope: {
       goal: cloneGoal,
-      coreFeatures: ["核心输入表单或配置", "主处理流程", "结果展示", "基础错误状态"],
+      coreFeatures,
       excludedFeatures: ["完整多用户系统", "复杂权限/计费", "原项目的所有高级能力"]
     },
     recommendedFor: ["想通过开源项目做作品集的人", "愿意从真实项目拆解工程结构的人"],
@@ -335,6 +330,77 @@ export function createRuleBasedAnalysis(
     confidence: 0.62,
     learningPlan: makeRuleBasedPlan(repo.name)
   };
+}
+
+export function upgradeLegacyRecommendationContent(
+  item: RadarRecommendation,
+  preference: UserPreference = defaultPreference
+): RadarRecommendation {
+  const { analysis } = item;
+  const legacySummary = /^适合围绕 .+ 做 mini 复刻，当前规则分 \d+。?$/.test(analysis.oneLineSummary.trim());
+  const legacyMini =
+    /^复刻一个 .+ lite，保留最能体现 .+ 学习价值的核心流程。?$/.test(analysis.miniCloneScope.goal.trim()) ||
+    ["核心输入表单或配置", "主处理流程", "结果展示"].every((feature) =>
+      analysis.miniCloneScope.coreFeatures.includes(feature)
+    );
+  const legacyReasons = analysis.whyLearn.some(
+    (reason) =>
+      /^学习雷达分 \d+$/.test(reason) ||
+      reason === "可从 README 和目录结构提炼核心流程" ||
+      reason === "仓库包含示例，适合裁剪学习"
+  );
+
+  if (!legacySummary && !legacyMini && !legacyReasons) return item;
+
+  const replacement = createRuleBasedAnalysis(item.repo, item.score, preference);
+  return {
+    ...item,
+    analysis: {
+      ...analysis,
+      oneLineSummary: legacySummary ? replacement.oneLineSummary : analysis.oneLineSummary,
+      whyLearn: legacyReasons ? replacement.whyLearn : analysis.whyLearn,
+      miniCloneScope: legacyMini ? replacement.miniCloneScope : analysis.miniCloneScope
+    }
+  };
+}
+
+function inferRuleCoreFeatures(repo: RepoSnapshot) {
+  const topicEvidence = [repo.name, repo.description, ...repo.topics]
+    .join(" ")
+    .toLowerCase();
+  const featureRules: Array<[RegExp, string]> = [
+    [/parallel-agents|parallel agents|fleet of .*agents|agent-orchestration|\borchestration\b/, "并行 Agent 编排"],
+    [/worktrees?|workspace isolation/, "Git Worktree 隔离"],
+    [/\bterminal\b|ghostty/, "终端会话管理"],
+    [/react-devtools|live devtools|running react/, "React 运行时检查"],
+    [/tanstack-query|tanstack-router|\btanstack\b/, "TanStack 状态调试"],
+    [/react-native|\bexpo\b|mobile-app/, "跨端应用调试"],
+    [/erd-diagram|erd builder|database design/, "ERD 数据建模"],
+    [/flowcharts?|drawing-app|drawings?|excalidraw/, "流程图与画布编辑"],
+    [/tiptap|notes?|documentation tool/, "文档与笔记编辑"],
+    [/model-context-protocol|\bmcp\b/, "MCP 服务连接"],
+    [/ai-agents|agentic|agent-ide|devtools-agent|react-agent|coding agent/, "AI Agent 接入"],
+    [/codegen|code-generator|generate.*code|ai-coding/, "代码生成"],
+    [/\bcli\b|command-line|commander/, "命令参数解析"],
+    [/workflow|orchestrat|pipeline/, "工作流编排"],
+    [/react|vue|svelte|frontend|\bui\b/, "交互界面"],
+    [/search|retriev|vector|embedding/, "搜索与检索"],
+    [/database|postgres|sqlite|mysql|storage/, "数据存储"],
+    [/\bapi\b|server|backend/, "API 请求处理"],
+    [/monitor|observab|status/, "状态监测"],
+    [/editor|language-server|\blsp\b/, "编辑器协议交互"],
+    [/auth|oauth|permission/, "身份与权限校验"]
+  ];
+  const matched = featureRules.filter(([pattern]) => pattern.test(topicEvidence)).map(([, label]) => label);
+
+  return Array.from(
+    new Set([
+      ...matched,
+      `${repo.name} 主路径`,
+      `${repo.primaryLanguage} 核心逻辑`,
+      "可验证结果输出"
+    ])
+  ).slice(0, 4);
 }
 
 function inferProjectType(repo: RepoSnapshot) {

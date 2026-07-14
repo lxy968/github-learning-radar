@@ -14,7 +14,8 @@ const numericRules = [
   ["RADAR_AI_TIMEOUT_MS", 5_000, 120_000],
   ["RADAR_WORKER_POLL_MS", 1_000, 60_000],
   ["RADAR_JOB_STALE_AFTER_MS", 30_000, 3_600_000],
-  ["STUDY_PLAN_AI_TIMEOUT_MS", 5_000, 120_000],
+  ["STUDY_PLAN_AI_TIMEOUT_MS", 30_000, 600_000],
+  ["STUDY_PLAN_JOB_STALE_AFTER_MS", 300_000, 3_600_000],
   ["RETENTION_RADAR_RUN_DAYS", 7, 3_650],
   ["RETENTION_MIN_RADAR_RUNS", 1, 500],
   ["RETENTION_JOB_RUN_DAYS", 1, 3_650],
@@ -49,6 +50,9 @@ export function validateProductionConfig(env, profile) {
     }
     if (env.GITHUB_TOKEN) {
       warn("unnecessary_secret", "GITHUB_TOKEN", "The Web process does not need GITHUB_TOKEN; keep it on the Worker only.");
+    }
+    if (env.DEEPSEEK_API_KEY) {
+      warn("unnecessary_secret", "DEEPSEEK_API_KEY", "The Web process does not call DeepSeek; keep the API key on the Worker only.");
     }
   }
 
@@ -146,8 +150,10 @@ function validateDeepSeek(env, issue, warn) {
   } catch {
     issue("invalid_url", "DEEPSEEK_BASE_URL", "DEEPSEEK_BASE_URL is not a valid URL.");
   }
-  if (env.DEEPSEEK_MODEL !== undefined && !env.DEEPSEEK_MODEL.trim()) {
-    issue("empty_model", "DEEPSEEK_MODEL", "DEEPSEEK_MODEL must not be empty when explicitly configured.");
+  for (const variable of ["DEEPSEEK_FLASH_MODEL", "DEEPSEEK_PRO_MODEL", "DEEPSEEK_MODEL"]) {
+    if (env[variable] !== undefined && !env[variable].trim()) {
+      issue("empty_model", variable, `${variable} must not be empty when explicitly configured.`);
+    }
   }
 }
 
@@ -167,8 +173,8 @@ function validateNumericSettings(env, issue, warn) {
   if (staleMs < pollMs * 3) {
     warn("tight_stale_window", "RADAR_JOB_STALE_AFTER_MS", "Use at least three Worker polling intervals before declaring a job stale.");
   }
-  const recommendationLimit = parsed.get("RADAR_RECOMMENDATION_LIMIT") ?? 6;
-  const analyzedLimit = parsed.get("RADAR_MAX_ANALYZED_CANDIDATES") ?? 3;
+  const recommendationLimit = parsed.get("RADAR_RECOMMENDATION_LIMIT") ?? 7;
+  const analyzedLimit = parsed.get("RADAR_MAX_ANALYZED_CANDIDATES") ?? 7;
   if (analyzedLimit > recommendationLimit) {
     warn("excess_ai_limit", "RADAR_MAX_ANALYZED_CANDIDATES", "The AI candidate limit is higher than the final recommendation limit.");
   }

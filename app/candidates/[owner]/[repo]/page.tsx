@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ArrowUpRight, FileCode2, GitFork, Star } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, FileCode2, GitFork, Star } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import { seedRepos } from "@/lib/seed-data";
 import { formatNumber } from "@/lib/utils";
 import { getRepoSignal } from "@/lib/repository-signals";
 import { RepositorySignalBadge } from "@/components/repository-signal-badge";
+import { sanitizeReadmeExcerpt } from "@/lib/readme";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,7 @@ export default async function CandidateDetailPage({
   const candidate = storedCandidate ?? seedRepos.find((item) => item.fullName.toLowerCase() === fullName);
 
   if (!candidate) notFound();
+  const readmeSummary = sanitizeReadmeExcerpt(candidate.readmeExcerpt, 1200);
 
   return (
     <AppShell>
@@ -73,7 +75,7 @@ export default async function CandidateDetailPage({
           <Panel className="p-5">
             <h2 className="text-base font-semibold text-slate-950">README 摘要</h2>
             <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">
-              {candidate.readmeExcerpt || signalEmptyText(getRepoSignal(candidate, "readme"), "README")}
+              {readmeSummary || signalEmptyText(getRepoSignal(candidate, "readme"), "README")}
             </p>
           </Panel>
 
@@ -100,22 +102,23 @@ export default async function CandidateDetailPage({
           </Panel>
 
           <Panel className="p-5">
-            <h2 className="text-sm font-semibold text-slate-950">AI 分析状态</h2>
+            <h2 className="text-sm font-semibold text-slate-950">具体学习方案</h2>
             {recommendation ? (
-              <>
-                <p className="mt-2 text-sm leading-6 text-slate-600">这个候选已经进入当前雷达，并完成 DeepSeek 或规则 fallback 分析。</p>
-                <Link
-                  href={`/projects/${encodeURIComponent(candidate.owner)}/${encodeURIComponent(candidate.name)}`}
-                  className="mt-4 inline-flex text-sm font-medium text-teal-700 hover:text-teal-800"
-                >
-                  查看学习方案
-                </Link>
-              </>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                这个项目已经进入今日推荐，生成时会结合现有结构化分析、README 和工程信号。
+              </p>
             ) : (
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                这个仓库目前只是候选，还没有进入本轮最高分项目，因此不会消耗 AI 调用。
+                即使没有进入今日推荐，也可以根据已保存的 README、技术栈和工程信号生成 3、7 或 14 天方案。
               </p>
             )}
+            <Link
+              href={`/projects/${encodeURIComponent(candidate.owner)}/${encodeURIComponent(candidate.name)}/learning-plan`}
+              className="focus-ring mt-4 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-md bg-teal-700 px-3 text-sm font-semibold text-white hover:bg-teal-800"
+            >
+              生成具体学习方案 <ArrowRight size={15} />
+            </Link>
+            <p className="mt-2 text-xs leading-5 text-slate-500">打开方案页不会调用模型，点击生成后才会创建后台任务。</p>
           </Panel>
         </aside>
       </div>

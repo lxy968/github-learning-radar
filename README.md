@@ -21,7 +21,11 @@ flowchart LR
   fallback --> snapshot
   snapshot --> web
   snapshot -.->|可重建| projections["score / analysis / recommendation 投影"]
-  web --> plans["版本化学习方案与进度"]
+  web --> planqueue["学习方案后台任务（严格串行）"]
+  planqueue --> worker
+  worker --> pro["DeepSeek Pro 一次生成完整周期"]
+  pro --> plans["版本化学习方案与进度"]
+  plans --> web
 ```
 
 Web 只读取 `radar_runs` 完整快照，规范化表用于审计和统计；生产任务由独立 Worker 执行。详细的数据所有权见 [DATA_MODEL.md](./DATA_MODEL.md)，部署拓扑与环境要求见 [DEPLOYMENT.md](./DEPLOYMENT.md)。
@@ -45,14 +49,16 @@ pnpm dev --hostname 127.0.0.1
 - `GITHUB_ENRICH_LIMIT`: 每日补充 README、languages、根目录文件信号的候选数量，默认 `12`；其余候选仍进入候选池。
 - `GITHUB_ENRICH_CONCURRENCY`: enrichment 并发数，默认 `4`。
 - `GITHUB_REQUEST_TIMEOUT_MS`: 单次 GitHub API 请求超时，默认 `10000` 毫秒；四条搜索查询会并行执行。
-- `DEEPSEEK_API_KEY`: 启用 DeepSeek 结构化分析；未配置或调用失败时使用本地规则 fallback。
+- `DEEPSEEK_API_KEY`: 启用 DeepSeek 结构化分析；生产环境只交给 Worker。雷达分析失败可规则 fallback，Pro 学习方案失败会显示简短错误，不会把规则内容冒充 Pro 输出。
 - `DEEPSEEK_BASE_URL`: DeepSeek OpenAI-compatible base URL，默认 `https://api.deepseek.com`。
-- `DEEPSEEK_MODEL`: DeepSeek 模型名，默认 `deepseek-v4-pro`。
-- `RADAR_RECOMMENDATION_LIMIT`: 每次最终展示的推荐数量，默认 `6`。
-- `RADAR_MAX_ANALYZED_CANDIDATES`: 每次真正调用 DeepSeek 的高分候选上限，默认 `3`；其余推荐使用本地规则分析，完整候选仍保存在候选池。
+- `DEEPSEEK_FLASH_MODEL`: 候选简介、学习价值和 Mini 范围分析模型，默认 `deepseek-v4-flash`。
+- `DEEPSEEK_PRO_MODEL`: 用户按需生成 3/7/14 天具体学习方案的模型，默认 `deepseek-v4-pro`；旧 `DEEPSEEK_MODEL` 仅作为 Pro 配置兼容项。
+- `RADAR_RECOMMENDATION_LIMIT`: 每次最终展示的推荐数量，默认 `7`。
+- `RADAR_MAX_ANALYZED_CANDIDATES`: 每次真正调用 DeepSeek Flash 的高分候选上限，默认 `7`；因此默认展示的 7 个推荐都会尝试由 Flash 分析，调用失败时才使用本地规则回退，完整候选仍保存在候选池。
 - `RADAR_AI_CONCURRENCY`: DeepSeek 分析并发数，默认 `3`。
 - `RADAR_AI_TIMEOUT_MS`: 单个仓库 DeepSeek 分析超时，默认 `25000` 毫秒；整批失败时会熔断后续调用。
-- `STUDY_PLAN_AI_TIMEOUT_MS`: 用户按需生成单个仓库具体学习方案的超时，默认 `35000` 毫秒；失败时自动使用规则方案。
+- `STUDY_PLAN_AI_TIMEOUT_MS`: DeepSeek Pro 一次生成完整 3/7/14 天方案的超时，默认 `300000` 毫秒，允许配置到 `600000`。浏览器只创建后台任务，不等待模型返回。
+- `STUDY_PLAN_JOB_STALE_AFTER_MS`: 学习方案 Worker 心跳过期阈值，默认 `600000` 毫秒；Worker 运行期间仍会持续更新心跳。
 - `DATABASE_URL`: 启用 PostgreSQL 存储；未配置时使用 `.data` 本地 JSON。
 - `CRON_SECRET`: 保护 `/api/cron/daily-radar`，只给 GitHub Actions 或定时任务使用。
 - `ADMIN_SECRET`: 生产环境保护手动全站刷新接口；建议使用独立的高强度随机值。
@@ -126,14 +132,14 @@ curl -H "Authorization: Bearer $CRON_SECRET" \
 
 ## 页面
 
-桌面端主导航为“今日推荐、我的学习、收藏、设置”，候选项目、项目库和运行历史归入“探索”。手机端使用固定四项底部导航，探索入口保留在顶部菜单，并为安全区域预留底部空间。
+桌面端主导航为“今日推荐、我的学习、收藏、设置”，候选项目和运行历史归入“探索”。手机端使用固定四项底部导航，探索入口保留在顶部菜单，并为安全区域预留底部空间。
 
 - `/`: 今日学习雷达；首屏聚焦项目用途、推荐原因、预计投入、Mini 复刻点和“开始/继续学习”，原始简介与完整评分默认折叠。
 - `/candidates`: GitHub discovery 候选池；搜索、分类筛选、Stars/更新时间/名称排序和分页均在服务端执行，浏览器只接收当前页数据。
-- `/candidates/:owner/:repo`: 候选仓库详情、README 摘要和工程信号；README、语言、测试、示例、CI 和 Docker 信号明确区分“有 / 无 / 未知”，只有进入最终雷达后才会有 DeepSeek 或规则学习方案。
+- `/candidates/:owner/:repo`: 候选仓库详情、README 摘要和工程信号；README、语言、测试、示例、CI 和 Docker 信号明确区分“有 / 无 / 未知”。任何已保存候选都能进入具体学习方案页，打开页面不会调用模型，点击生成后才创建后台任务。
 - `/projects/:owner/:repo`: 项目详情、学习价值、mini 复刻范围和具体学习方案入口。
 - `/projects/:owner/:repo/learning-plan`: 按需生成并缓存 3/7/14 天具体方案；缓存同时校验仓库输入哈希、学习水平、目标、prompt/schema 版本和 DeepSeek 模型。专注模式固定展示总进度和当前任务，只展开当前 Day，并支持“完成并进入下一步”。
-- `/library`: 标准化项目库。
+- `/library`: 兼容旧地址并跳转到候选项目；原项目库只是重复展示当前推荐，已合并到候选池。
 - `/routes`: 收藏项目学习路线，按本机步骤完成度排序。
 - `/bookmarks`: 已收藏项目。
 - `/history`: 历史雷达运行记录，并展示 GitHub 查询失败数、DeepSeek 成功/fallback 数和 provider 返回的 Token 用量。
@@ -154,8 +160,10 @@ curl -H "Authorization: Bearer $CRON_SECRET" \
 - `GET /api/feedback?repoId=<id>`: 读取项目反馈状态。
 - `POST /api/feedback`: 写入想学、收藏、跳过等反馈事件。
 - `GET /api/bookmarks`: 读取收藏项目。
-- `GET /api/study-plans?repoId=<id>`: 读取仓库已缓存的具体学习方案。
-- `POST /api/study-plans`: 按需生成或重新生成单个仓库的具体学习方案。
+- `GET /api/study-plans?owner=<owner>&repo=<repo>`: 读取当前项目的三个周期方案和当前匿名会话正在运行的串行任务。
+- `GET /api/study-plans?runId=<runId>`: 恢复某个学习方案后台任务及其结果。
+- `POST /api/study-plans`: 创建一次性生成完整 3/7/14 天方案的后台任务，成功接受时返回 `202`；同一匿名会话同时只运行一个周期。
+- `DELETE /api/study-plans`: 可以取消尚未开始的排队任务；已经开始的单次模型生成不会被中途截断。
 - `GET /api/preferences`: 读取兴趣画像。
 - `PUT /api/preferences`: 保存兴趣画像。
 

@@ -8,6 +8,7 @@ import { ScoreBars } from "@/components/score-bars";
 import { Badge } from "@/components/ui/badge";
 import { Panel } from "@/components/ui/panel";
 import { getCurrentRecommendation } from "@/lib/radar";
+import { sanitizeReadmeExcerpt } from "@/lib/readme";
 import { uniqueTextValues } from "@/lib/text-lists";
 import { formatDate, formatNumber } from "@/lib/utils";
 
@@ -28,6 +29,7 @@ export default async function ProjectPage({
   const coreFeatures = uniqueTextValues(analysis.miniCloneScope.coreFeatures);
   const excludedFeatures = uniqueTextValues(analysis.miniCloneScope.excludedFeatures);
   const risks = uniqueTextValues([...score.risks, ...analysis.risks]).slice(0, 5);
+  const readmeSummary = sanitizeReadmeExcerpt(snapshot.readmeExcerpt || snapshot.description, 900);
   const learningPlanHref = `/projects/${encodeURIComponent(snapshot.owner)}/${encodeURIComponent(snapshot.name)}/learning-plan`;
 
   return (
@@ -68,7 +70,7 @@ export default async function ProjectPage({
               <Badge tone="amber">置信度 {Math.round(analysis.confidence * 100)}%</Badge>
             </div>
             <p className="mt-4 text-sm leading-6 text-slate-700">
-              {snapshot.readmeExcerpt || snapshot.description || "当前没有 README 摘要，建议先打开 GitHub 仓库确认细节。"}
+              {readmeSummary || "当前没有 README 摘要，建议先打开 GitHub 仓库确认细节。"}
             </p>
             <div className="mt-5 grid gap-3 text-sm lg:grid-cols-3">
               <Metric label="Stars" value={formatNumber(snapshot.stars)} icon={Star} />
@@ -179,9 +181,9 @@ function AnalysisSourcePanel({ trace }: { trace: NonNullable<Awaited<ReturnType<
   return (
     <Panel className="p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-slate-950">分析来源</h2>
+        <h2 className="text-sm font-semibold text-slate-950">分析方式</h2>
         <Badge tone={succeeded ? "blue" : trace ? "amber" : "neutral"}>
-          {succeeded ? "DeepSeek" : trace ? "规则 fallback" : "历史记录"}
+          {succeeded ? "智能分析" : trace ? "内置规则" : "历史记录"}
         </Badge>
       </div>
       <p className="mt-2 text-sm leading-6 text-slate-600">{analysisSourceDescription(trace)}</p>
@@ -192,14 +194,14 @@ function AnalysisSourcePanel({ trace }: { trace: NonNullable<Awaited<ReturnType<
 function analysisSourceDescription(
   trace: NonNullable<Awaited<ReturnType<typeof getCurrentRecommendation>>>["analysisTrace"]
 ) {
-  if (!trace) return "这条历史推荐生成时尚未记录 provider 调用明细。";
+  if (!trace) return "这条历史推荐生成时尚未记录分析方式。";
   const attempt = trace.providerAttempts[0];
-  if (attempt?.status === "success") return `已由 DeepSeek ${attempt.modelId} 完成分析。`;
+  if (attempt?.status === "success") return "已根据仓库说明、技术栈和工程信号完成智能分析。";
   if (attempt?.status === "failed") {
-    return `DeepSeek ${attempt.modelId} 调用失败，已切换为规则分析：${attempt.errorSummary ?? "未记录错误摘要"}`;
+    return "智能分析服务未能完成本次任务，已自动切换为内置规则分析。";
   }
-  if (trace.fallbackReason === "not-configured") return "未配置 DeepSeek API Key，本次直接使用规则分析，没有发起模型调用。";
-  return "本项目未进入本轮 DeepSeek 分析额度，直接使用规则分析，没有消耗模型 Token。";
+  if (trace.fallbackReason === "not-configured") return "未配置智能分析服务，本次直接使用内置规则，没有发起模型调用。";
+  return "本项目未进入本轮智能分析额度，直接使用内置规则，没有消耗模型 Token。";
 }
 
 function Metric({

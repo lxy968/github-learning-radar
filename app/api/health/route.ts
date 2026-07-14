@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { redactOperationalError } from "@/lib/api-security";
 import { getSqlClient } from "@/lib/db/client";
 import { getJobQueueHealth } from "@/lib/job-runs";
+import { detailedStudyPlanJobName } from "@/lib/study-plan-jobs";
 
 const dailyRadarJobName = "daily-radar";
 
@@ -14,12 +15,14 @@ export async function GET() {
     const production = process.env.NODE_ENV === "production";
     try {
       const taskQueue = await getJobQueueHealth(dailyRadarJobName, new Date(), staleAfterMs);
+      const studyPlanQueue = await getJobQueueHealth(detailedStudyPlanJobName, new Date(), 10 * 60_000);
       return NextResponse.json(
         {
           status: production ? "degraded" : taskQueue.staleRunning > 0 ? "degraded" : "ok",
           storage: "local-json",
           checkedAt,
           taskQueue,
+          studyPlanQueue,
           message: production ? "DATABASE_URL is required for reliable multi-instance deployment." : "Local development storage is active."
         },
         { status: production ? 503 : 200 }
@@ -35,9 +38,10 @@ export async function GET() {
   try {
     await sql`SELECT 1 AS healthy`;
     const taskQueue = await getJobQueueHealth(dailyRadarJobName, new Date(), staleAfterMs);
-    const degraded = taskQueue.staleRunning > 0 || taskQueue.queued >= 10;
+    const studyPlanQueue = await getJobQueueHealth(detailedStudyPlanJobName, new Date(), 10 * 60_000);
+    const degraded = taskQueue.staleRunning > 0 || taskQueue.queued >= 10 || studyPlanQueue.staleRunning > 0;
     return NextResponse.json(
-      { status: degraded ? "degraded" : "ok", storage: "postgres", checkedAt, taskQueue },
+      { status: degraded ? "degraded" : "ok", storage: "postgres", checkedAt, taskQueue, studyPlanQueue },
       { status: degraded ? 503 : 200 }
     );
   } catch (error) {

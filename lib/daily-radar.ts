@@ -13,8 +13,8 @@ import { scoreRepository } from "@/lib/scoring";
 import { defaultPreference } from "@/lib/seed-data";
 import type { RadarRecommendation, RadarRun, RepoSnapshot } from "@/lib/types";
 
-const maxRecommendedCandidates = readBoundedInteger(process.env.RADAR_RECOMMENDATION_LIMIT, 6, 1, 24);
-const maxAiCandidates = readBoundedInteger(process.env.RADAR_MAX_ANALYZED_CANDIDATES, 3, 0, 24);
+const maxRecommendedCandidates = readBoundedInteger(process.env.RADAR_RECOMMENDATION_LIMIT, 7, 1, 24);
+const maxAiCandidates = readBoundedInteger(process.env.RADAR_MAX_ANALYZED_CANDIDATES, 7, 0, 24);
 
 type ScoredCandidate = {
   repo: RepoSnapshot;

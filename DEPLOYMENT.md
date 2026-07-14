@@ -11,7 +11,7 @@ Browser → Next.js Web/API → PostgreSQL
 Cron/Admin → 受保护刷新入口 → PostgreSQL 任务队列 → 独立 Worker（4.3）
 ```
 
-当前 Web/API 已改为快速创建持久化任务并返回 `202`，不再在触发请求中等待 GitHub 和 DeepSeek。开发环境会自动执行已入队任务，便于本地使用；生产环境必须另行启动 `pnpm worker:radar`（或由任务平台反复调用 `pnpm worker:radar:once`），否则任务会保持 `queued`。`POST /api/radar/refresh` 仍只允许管理员调用。
+当前 Web/API 已改为快速创建持久化任务并返回 `202`，雷达刷新和 Pro 学习方案都不在浏览器请求中等待外部 API。3/7/14 天学习方案分别由一次模型调用完整生成，同一匿名会话只允许一个周期运行。开发环境会自动执行已入队任务；生产环境必须另行启动 `pnpm worker:radar`（该 Worker 现在同时领取雷达与学习方案任务），否则任务会保持 `queued`。
 
 用户偏好、收藏和反馈已按 HttpOnly 匿名会话隔离，公共雷达结果仍为全站共享。匿名 Cookie 丢失后无法恢复原数据；若未来需要跨浏览器身份恢复，再接入正式登录和账号绑定。
 
@@ -22,18 +22,22 @@ Cron/Admin → 受保护刷新入口 → PostgreSQL 任务队列 → 独立 Work
 - `ADMIN_SECRET`
 - `SITE_URL`
 
-Web 不应持有 `GITHUB_TOKEN`；它只负责鉴权和入队。独立 Worker 必须配置 `DATABASE_URL`、`GITHUB_TOKEN`，DeepSeek 配置按需注入。Migration 进程只需要 `DATABASE_URL`。完整进程权限矩阵见 [OPERATIONS.md](./OPERATIONS.md)。
+Web 不应持有 `GITHUB_TOKEN` 或 `DEEPSEEK_API_KEY`；它只负责鉴权、入队和状态查询。Web 与 Worker 都应配置相同的 `DEEPSEEK_PRO_MODEL`，保证缓存身份一致；只有独立 Worker 注入 DeepSeek 密钥。Migration 进程只需要 `DATABASE_URL`。
 
 Worker 可选调优变量：
 
 - `RADAR_WORKER_POLL_MS`：常驻 Worker 的轮询间隔，默认 5000。
 - `RADAR_JOB_STALE_AFTER_MS`：心跳过期阈值，默认 300000。
+- `STUDY_PLAN_AI_TIMEOUT_MS`：Pro 单次完整方案超时，默认 300000，可配置到 600000。
+- `STUDY_PLAN_JOB_STALE_AFTER_MS`：学习方案任务过期阈值，默认 600000。
 
 数据保留变量使用 `.env.example` 中的 `RETENTION_*` 默认值。生产环境应至少每周先运行一次 `pnpm data:retention` 检查报告，再在备份正常时执行确认后的 apply 命令。
 
-DeepSeek 为可选增强；不配置时系统使用规则 fallback。启用时配置：
+DeepSeek 为可选增强；雷达未配置时使用规则 fallback，Pro 方案未配置时后台任务明确失败而不把规则内容冒充 AI 结果。Worker 启用时配置：
 
-- `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`
+- `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`
+- `DEEPSEEK_FLASH_MODEL`：候选简介、学习价值和 Mini 范围，默认 `deepseek-v4-flash`
+- `DEEPSEEK_PRO_MODEL`：按需生成具体学习方案，默认 `deepseek-v4-pro`
 
 完整变量和默认值见 `.env.example`。
 

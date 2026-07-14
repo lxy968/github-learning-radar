@@ -19,10 +19,6 @@ export type CreateJobRunInput = {
 
 const terminalStatuses = new Set<JobRunStatus>(["success", "partial", "failed", "cancelled"]);
 const dataDir = path.join(process.cwd(), ".data");
-const jobRunsFile = process.env.JOB_RUN_STORE_FILE
-  ? path.resolve(process.env.JOB_RUN_STORE_FILE)
-  : path.join(dataDir, "job-runs.json");
-let localMutationQueue = Promise.resolve();
 
 export function createDailyRadarIdempotencyKey(referenceDate = new Date()) {
   return `daily-radar:${referenceDate.toISOString().slice(0, 10)}`;
@@ -163,6 +159,37 @@ export async function listJobRuns(options: { limit?: number; status?: JobRunStat
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, limit)
     .map(normalizeJobRun);
+}
+
+export async function findActiveJobRunForUser(jobName: string, userId: string) {
+  const normalizedJobName = jobName.trim();
+  const normalizedUserId = userId.trim();
+  if (!normalizedJobName || !normalizedUserId) return null;
+  const sql = getSqlClient();
+
+  if (sql) {
+    const rows = await sql`
+      SELECT * FROM job_runs
+      WHERE job_name = ${normalizedJobName}
+        AND status IN ('queued', 'running')
+        AND payload ->> 'userId' = ${normalizedUserId}
+      ORDER BY created_at ASC
+      LIMIT 1
+    `;
+    return rows[0] ? mapJobRunRow(rows[0]) : null;
+  }
+
+  const store = await readLocalStore();
+  const job = store.jobs
+    .map(normalizeJobRun)
+    .filter(
+      (item) =>
+        item.jobName === normalizedJobName &&
+        (item.status === "queued" || item.status === "running") &&
+        item.payload.userId === normalizedUserId
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  return job ?? null;
 }
 
 export async function getJobQueueHealth(jobName: string, now = new Date(), staleAfterMs = 5 * 60_000) {
@@ -465,6 +492,59 @@ export async function touchJobRunHeartbeat(runId: string, now = new Date()) {
   });
 }
 
+export async function requestJobRunCancellation(runId: string, now = new Date()) {
+  const timestamp = now.toISOString();
+  const message = "Cancellation requested; the current stage may finish before the job stops.";
+  const sql = getSqlClient();
+
+  if (sql) {
+    const rows = await sql`
+      UPDATE job_runs
+      SET
+        stage = 'cancel-requested',
+        error_summary = ${message},
+        error_category = 'user_cancel_requested',
+        heartbeat_at = ${timestamp},
+        updated_at = ${timestamp}
+      WHERE run_id = ${runId}
+        AND status = 'running'
+      RETURNING *
+    `;
+    if (rows[0]) return mapJobRunRow(rows[0]);
+    const queued = await getJobRun(runId);
+    if (queued?.status === "queued") {
+      return finishJobRun(runId, {
+        status: "cancelled",
+        stage: "study-plan-cancelled",
+        errorSummary: message,
+        errorCategory: "user_cancelled"
+      }, now);
+    }
+    return queued;
+  }
+
+  const current = await getJobRun(runId);
+  if (current?.status === "queued") {
+    return finishJobRun(runId, {
+      status: "cancelled",
+      stage: "study-plan-cancelled",
+      errorSummary: message,
+      errorCategory: "user_cancelled"
+    }, now);
+  }
+  return mutateLocalJob(runId, (job) => {
+    if (job.status !== "running") return job;
+    return {
+      ...job,
+      stage: "cancel-requested",
+      errorSummary: message,
+      errorCategory: "user_cancel_requested",
+      heartbeatAt: timestamp,
+      updatedAt: timestamp
+    };
+  });
+}
+
 export async function requeueJobRun(
   runId: string,
   input: { delayMs: number; errorSummary: string; errorCategory: string },
@@ -696,9 +776,10 @@ async function mutateLocalJob(runId: string, mutate: (job: JobRun) => JobRun | n
 async function withLocalStoreMutation<T>(
   mutate: (store: LocalJobRunStore) => Promise<{ result: T; changed: boolean }>
 ) {
-  const previousMutation = localMutationQueue;
+  const mutationState = getLocalMutationState();
+  const previousMutation = mutationState.tail;
   let release: () => void = () => undefined;
-  localMutationQueue = new Promise<void>((resolve) => {
+  mutationState.tail = new Promise<void>((resolve) => {
     release = resolve;
   });
   await previousMutation;
@@ -714,22 +795,76 @@ async function withLocalStoreMutation<T>(
 }
 
 async function readLocalStore(): Promise<LocalJobRunStore> {
-  try {
-    const content = await fs.readFile(jobRunsFile, "utf8");
-    const parsed = JSON.parse(content) as Partial<LocalJobRunStore>;
-    return {
-      jobs: Array.isArray(parsed.jobs) ? parsed.jobs.map(normalizeJobRun) : []
-    };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { jobs: [] };
-    throw error;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const content = await fs.readFile(getJobRunsFile(), "utf8");
+      const parsed = JSON.parse(content) as Partial<LocalJobRunStore>;
+      return {
+        jobs: Array.isArray(parsed.jobs) ? parsed.jobs.map(normalizeJobRun) : []
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { jobs: [] };
+      if (attempt >= 4 || !isTransientLocalFileError(error)) throw error;
+      await waitForLocalFile(20 * (attempt + 1));
+    }
   }
+  return { jobs: [] };
 }
 
 async function writeLocalStore(store: LocalJobRunStore) {
+  const jobRunsFile = getJobRunsFile();
   const directory = path.dirname(jobRunsFile);
   const temporaryFile = `${jobRunsFile}.${randomUUID()}.tmp`;
+  const content = `${JSON.stringify(store, null, 2)}\n`;
   await fs.mkdir(directory, { recursive: true });
-  await fs.writeFile(temporaryFile, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-  await fs.rename(temporaryFile, jobRunsFile);
+  await fs.writeFile(temporaryFile, content, "utf8");
+  try {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        await fs.rename(temporaryFile, jobRunsFile);
+        return;
+      } catch (error) {
+        if (attempt >= 5 || !isTransientLocalFileError(error)) break;
+        await waitForLocalFile(25 * (attempt + 1));
+      }
+    }
+
+    // Windows development tools can briefly lock the existing JSON file and reject rename.
+    // Local mutations are serialized, so a retried direct replacement is the safest fallback.
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        await fs.writeFile(jobRunsFile, content, "utf8");
+        return;
+      } catch (error) {
+        if (attempt >= 5 || !isTransientLocalFileError(error)) throw error;
+        await waitForLocalFile(25 * (attempt + 1));
+      }
+    }
+  } finally {
+    await fs.rm(temporaryFile, { force: true }).catch(() => undefined);
+  }
+}
+
+function getLocalMutationState() {
+  const globalState = globalThis as typeof globalThis & {
+    __learningRadarJobMutationState?: { tail: Promise<void> };
+  };
+  globalState.__learningRadarJobMutationState ??= { tail: Promise.resolve() };
+  return globalState.__learningRadarJobMutationState;
+}
+
+function isTransientLocalFileError(error: unknown) {
+  if (error instanceof SyntaxError) return true;
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return code === "EPERM" || code === "EACCES" || code === "EBUSY" || code === "EEXIST";
+}
+
+function waitForLocalFile(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function getJobRunsFile() {
+  return process.env.JOB_RUN_STORE_FILE
+    ? path.resolve(process.env.JOB_RUN_STORE_FILE)
+    : path.join(dataDir, "job-runs.json");
 }

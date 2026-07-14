@@ -5,7 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { DetailedStudyPlanBuilder } from "@/components/detailed-study-plan-builder";
 import { PageHeader } from "@/components/page-header";
 import { listCurrentDetailedStudyPlans } from "@/lib/detailed-study-plans";
-import { getCurrentRecommendation } from "@/lib/radar";
+import { getCurrentRecommendation, getLearningRecommendation } from "@/lib/radar";
 import { getCurrentAnonymousUserId } from "@/lib/anonymous-session";
 import { getUserPreference } from "@/lib/preferences";
 
@@ -17,13 +17,16 @@ export default async function DetailedLearningPlanPage({
   params: Promise<{ owner: string; repo: string }>;
 }) {
   const { owner, repo } = await params;
-  const recommendation = await getCurrentRecommendation(owner, repo);
-  if (!recommendation) notFound();
-
   const userId = await getCurrentAnonymousUserId();
   const preference = await getUserPreference(userId);
+  const currentRecommendation = await getCurrentRecommendation(owner, repo);
+  const recommendation = currentRecommendation ?? await getLearningRecommendation(owner, repo, preference);
+  if (!recommendation) notFound();
+
   const plans = await listCurrentDetailedStudyPlans([recommendation], preference);
-  const projectHref = `/projects/${encodeURIComponent(recommendation.repo.owner)}/${encodeURIComponent(recommendation.repo.name)}`;
+  const projectHref = currentRecommendation
+    ? `/projects/${encodeURIComponent(recommendation.repo.owner)}/${encodeURIComponent(recommendation.repo.name)}`
+    : `/candidates/${encodeURIComponent(recommendation.repo.owner)}/${encodeURIComponent(recommendation.repo.name)}`;
 
   return (
     <AppShell>
@@ -38,7 +41,7 @@ export default async function DetailedLearningPlanPage({
               className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
               <ArrowLeft size={15} />
-              返回项目详情
+              {currentRecommendation ? "返回项目详情" : "返回候选详情"}
             </Link>
             <a
               href={recommendation.repo.url}

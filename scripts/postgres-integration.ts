@@ -35,7 +35,7 @@ async function main() {
   try {
     const migrationRows = await sql`
       SELECT version FROM schema_migrations
-      WHERE version = '0013_data_retention.sql'
+      WHERE version = '0014_study_plan_job_serialization.sql'
       LIMIT 1
     `;
     assert.equal(migrationRows.length, 1, "Run pnpm db:migrate before the PostgreSQL integration test.");

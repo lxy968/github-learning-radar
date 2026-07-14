@@ -10,9 +10,15 @@ import {
   createRuleBasedAnalysis,
   repositoryAnalysisPromptVersion,
   repositoryAnalysisSchemaVersion,
+  upgradeLegacyRecommendationContent,
   type RepositoryAnalysisResult
 } from "../lib/ai/analyze";
-import { createRuleBasedDetailedStudyPlan, generateDetailedStudyPlan } from "../lib/ai/detailed-study-plan";
+import {
+  createRuleBasedDetailedStudyPlan,
+  generateDetailedStudyPlan,
+  normalizeDetailedStudyPlanModelContent,
+  parseDetailedStudyPlanModelJson
+} from "../lib/ai/detailed-study-plan";
 import { getConfiguredAiModel } from "../lib/ai/provider";
 import {
   buildDetailedStudyPlanCacheMetadata,
@@ -25,6 +31,10 @@ import {
   listCurrentDetailedStudyPlans,
   listDetailedStudyPlans
 } from "../lib/detailed-study-plans";
+import {
+  enqueueDetailedStudyPlanJob,
+  executeDetailedStudyPlanJob
+} from "../lib/study-plan-jobs";
 import { authorizeAdminRequest, consumeRequestRateLimit } from "../lib/api-security";
 import { getDetailedStudyPlanSteps, getDetailedStudyPlanStorageKey } from "../lib/detailed-study-progress";
 import {
@@ -34,7 +44,7 @@ import {
 } from "../lib/anonymous-session";
 import { buildDiscoveryQueries } from "../lib/github/discovery";
 import { analyzeScoredCandidates, type DailyRadarRunOptions } from "../lib/daily-radar";
-import { getRadarStats, getRecommendations, getTopCategory } from "../lib/radar";
+import { getLearningRecommendation, getRadarStats, getRecommendations, getTopCategory } from "../lib/radar";
 import { createRadarRunProjection } from "../lib/radar-run-projection";
 import { rebuildRadarRunProjections } from "../lib/radar-runs";
 import { getRefreshScheduleDecision } from "../lib/refresh-schedule";
@@ -43,6 +53,7 @@ import { getSiteUrl } from "../lib/site-url";
 import { runDataRetention, type DataRetentionPolicy } from "../lib/data-retention";
 import { classifyOperationalError, getRetryDelayMs, withOperationalRetry } from "../lib/operational-errors";
 import { sanitizeReadmeExcerpt } from "../lib/readme";
+import { getLearnerCommunicationGuidance, shouldIncludeLearnerGlossary } from "../lib/learning-language";
 import {
   createUnknownEnrichmentSignals,
   getRepoSignal,
@@ -80,6 +91,8 @@ async function main() {
   verifyRefreshProcessSecretBoundary();
   verifyRepositoryHygieneRules();
   verifyScoring();
+  verifyRuleAnalysisDifferentiation();
+  verifyLegacyRecommendationUpgrade();
   verifyRepositorySignalStates();
   verifyCandidateServerPagination();
   verifyRadarRunProjection();
@@ -94,11 +107,14 @@ async function main() {
   verifyReadmeSanitizer();
   verifyUniqueTextValues();
   verifyRuleBasedDetailedStudyPlan();
+  verifyDetailedStudyPlanModelOutputRecovery();
+  verifyLearnerCommunicationGuidance();
   verifyDetailedStudyPlanCacheIdentity();
-  verifyDetailedPlanFocusMode();
+  await verifyDetailedPlanFocusMode();
   await verifyNoKeyFallback();
   await verifyDetailedStudyPlanFallback();
   await verifyDetailedStudyPlanCachePersistence();
+  await verifyStudyPlanBackgroundJobs();
   await verifyProjectionRebuildSkip();
   await verifySingleRepositoryAiFallback();
   await verifyUnexpectedAnalyzerFailure();
@@ -116,22 +132,29 @@ async function main() {
   await verifyRefreshStatusEndpoint();
   await verifyHealthEndpoint();
   await verifyCandidateStore();
+  await verifyCandidateLearningRecommendation();
 
   console.log("Verification passed");
 }
 
 function verifyProviderSelection() {
-  const deepSeekConfig = getConfiguredAiModel({
+  const modelEnv = {
     ...process.env,
     DEEPSEEK_API_KEY: "test-deepseek-key",
-    DEEPSEEK_MODEL: "deepseek-v4-pro",
+    DEEPSEEK_FLASH_MODEL: "deepseek-v4-flash",
+    DEEPSEEK_PRO_MODEL: "deepseek-v4-pro",
     OPENAI_API_KEY: "test-openai-key"
-  });
+  };
+  const flashConfig = getConfiguredAiModel("radar-analysis", modelEnv);
+  const proConfig = getConfiguredAiModel("detailed-study-plan", modelEnv);
 
-  assert.equal(deepSeekConfig?.provider, "deepseek");
-  assert.equal(deepSeekConfig?.modelId, "deepseek-v4-pro");
+  assert.equal(flashConfig?.provider, "deepseek");
+  assert.equal(flashConfig?.task, "radar-analysis");
+  assert.equal(flashConfig?.modelId, "deepseek-v4-flash");
+  assert.equal(proConfig?.task, "detailed-study-plan");
+  assert.equal(proConfig?.modelId, "deepseek-v4-pro");
 
-  const openAIOnlyConfig = getConfiguredAiModel({
+  const openAIOnlyConfig = getConfiguredAiModel("radar-analysis", {
     ...process.env,
     DEEPSEEK_API_KEY: "",
     OPENAI_API_KEY: "test-openai-key",
@@ -261,6 +284,42 @@ function verifyScoring() {
   assert.equal(score.repoId, seedRepos[0].id);
   assert.ok(score.finalScore >= 0 && score.finalScore <= 100);
   assert.ok(score.reasons.length > 0);
+}
+
+function verifyRuleAnalysisDifferentiation() {
+  const firstRepo = seedRepos[0];
+  const secondRepo = seedRepos[3];
+  const first = createRuleBasedAnalysis(firstRepo, scoreRepository(firstRepo, defaultPreference), defaultPreference);
+  const second = createRuleBasedAnalysis(secondRepo, scoreRepository(secondRepo, defaultPreference), defaultPreference);
+
+  assert.notEqual(first.oneLineSummary, second.oneLineSummary);
+  assert.notEqual(first.miniCloneScope.goal, second.miniCloneScope.goal);
+  assert.ok(!first.miniCloneScope.coreFeatures.includes("核心输入表单或配置"));
+  assert.ok(!first.miniCloneScope.coreFeatures.includes("主处理流程"));
+  assert.ok(first.whyLearn.every((reason) => reason.length >= 6));
+}
+
+function verifyLegacyRecommendationUpgrade() {
+  const current = getRecommendations(defaultPreference)[0];
+  const legacy = {
+    ...current,
+    analysis: {
+      ...current.analysis,
+      oneLineSummary: `适合围绕 ${current.repo.primaryLanguage} / ai-app 做 mini 复刻，当前规则分 ${current.score.finalScore}。`,
+      whyLearn: [`学习雷达分 ${current.score.finalScore}`, "可从 README 和目录结构提炼核心流程"],
+      miniCloneScope: {
+        goal: `复刻一个 ${current.repo.name} lite，保留最能体现 ${current.repo.primaryLanguage} 和 ai-app 学习价值的核心流程。`,
+        coreFeatures: ["核心输入表单或配置", "主处理流程", "结果展示"],
+        excludedFeatures: ["原项目的所有高级能力"]
+      }
+    }
+  };
+  const upgraded = upgradeLegacyRecommendationContent(legacy, defaultPreference);
+
+  assert.notEqual(upgraded.analysis.oneLineSummary, legacy.analysis.oneLineSummary);
+  assert.notEqual(upgraded.analysis.miniCloneScope.goal, legacy.analysis.miniCloneScope.goal);
+  assert.ok(!upgraded.analysis.miniCloneScope.coreFeatures.includes("主处理流程"));
+  assert.equal(legacy.analysis.miniCloneScope.coreFeatures.includes("主处理流程"), true);
 }
 
 function verifyRepositorySignalStates() {
@@ -474,9 +533,12 @@ function verifyRecommendationCardHierarchy() {
   assert.ok(continueMarkup.includes("继续学习"));
   assert.ok(startMarkup.includes("为什么推荐"));
   assert.ok(startMarkup.includes("Mini 复刻重点"));
-  assert.ok(startMarkup.includes("查看原始简介、完整理由与五维评分"));
-  assert.ok(startMarkup.indexOf("开始学习") < startMarkup.indexOf("查看原始简介、完整理由与五维评分"));
-  assert.ok(tracedMarkup.includes("DeepSeek 分析"));
+  assert.ok(startMarkup.includes("查看 README 摘录、完整推荐依据与评分"));
+  assert.ok(startMarkup.includes("README 清洗摘录"));
+  assert.ok(startMarkup.includes(item.analysis.oneLineSummary));
+  assert.ok(startMarkup.indexOf("开始学习") < startMarkup.indexOf("查看 README 摘录、完整推荐依据与评分"));
+  assert.ok(tracedMarkup.includes("智能分析"));
+  assert.equal(tracedMarkup.includes("test-model"), false);
 }
 
 function verifyNavigationStructure() {
@@ -486,7 +548,7 @@ function verifyNavigationStructure() {
   );
   assert.deepEqual(
     exploreNavItems.map((item) => item.label),
-    ["候选项目", "项目库", "运行历史"]
+    ["候选项目", "运行历史"]
   );
   assert.equal(isNavItemActive("/", primaryNavItems[0]), true);
   assert.equal(isNavItemActive("/projects/demo/repo/learning-plan", primaryNavItems[1]), true);
@@ -759,6 +821,15 @@ function verifyReadmeSanitizer() {
   assert.ok(cleanedLegacy.includes("Run agents."));
   assert.ok(!cleanedLegacy.includes("<"));
   assert.ok(!cleanedLegacy.includes("href="));
+
+  const badgeHeavy =
+    "# Genie React\n[![npm version](https://img.shields.io/npm/v/genie-react.svg)](https://www.npmjs.com/package/genie-react)\nhttps://img.shields.io/npm/dm/genie-react.svg\nGenerate React components from a short instruction.";
+  const cleanedBadgeHeavy = sanitizeReadmeExcerpt(badgeHeavy);
+  assert.ok(cleanedBadgeHeavy.includes("Genie React"));
+  assert.ok(cleanedBadgeHeavy.includes("Generate React components"));
+  assert.ok(!cleanedBadgeHeavy.includes("npm version"));
+  assert.ok(!cleanedBadgeHeavy.includes("https://"));
+  assert.ok(!cleanedBadgeHeavy.includes("img.shields.io"));
 }
 
 function verifyUniqueTextValues() {
@@ -772,13 +843,70 @@ function verifyRuleBasedDetailedStudyPlan() {
   const steps = plan3Days.days.flatMap((day) => day.steps);
 
   assert.equal(plan3Days.days.length, 3);
+  assert.equal(plan3Days.generationStatus, "complete");
   assert.equal(plan14Days.days.length, 14);
+  assert.equal(plan14Days.generatedThroughDay, 14);
+  assert.equal(plan14Days.generationStatus, "complete");
+  assert.ok((plan14Days.glossary?.length ?? 0) > 0);
   assert.ok(steps.every((step) => step.actions.length >= 2));
   assert.ok(steps.every((step) => step.references.length >= 1));
   assert.ok(steps.every((step) => step.verification.length > 4));
   assert.equal(new Set(steps.map((step) => step.id)).size, steps.length);
   assert.equal(getDetailedStudyPlanSteps(plan3Days).length, steps.length);
   assert.equal(getDetailedStudyPlanStorageKey(plan3Days.id), `detailed-study-plan:${plan3Days.id}`);
+}
+
+function verifyDetailedStudyPlanModelOutputRecovery() {
+  const parsed = parseDetailedStudyPlanModelJson(
+    '下面是结果：\n```json\n{"summary":"完整方案","prerequisites":["A","B"],"glossary":[],"days":[]}\n```\n请查收。'
+  ) as { summary?: string };
+  assert.equal(parsed.summary, "完整方案");
+  assert.throws(() => parseDetailedStudyPlanModelJson('{"summary":"被截断"'), /可能被截断/);
+
+  const normalized = normalizeDetailedStudyPlanModelContent(
+    {
+      summary: "摘要",
+      prerequisites: Array.from({ length: 10 }, (_, index) => `准备 ${index + 1}`),
+      glossary: Array.from({ length: 8 }, (_, index) => ({ term: `术语 ${index + 1}`, explanation: "解释" })),
+      days: [
+        {
+          day: "1",
+          goal: "目标",
+          outcome: "结果",
+          steps: Array.from({ length: 5 }, () => ({
+            title: "步骤",
+            purpose: "目的",
+            actions: ["操作一", "操作二"],
+            references: ["README.md"],
+            verification: "完成验证",
+            deliverable: "交付物",
+            estimatedMinutes: "60"
+          }))
+        }
+      ]
+    },
+    1,
+    1
+  ) as { prerequisites: unknown[]; glossary: unknown[]; days: Array<{ day: number; steps: unknown[] }> };
+  assert.equal(normalized.prerequisites.length, 8);
+  assert.equal(normalized.glossary.length, 6);
+  assert.equal(normalized.days[0].day, 1);
+  assert.equal(normalized.days[0].steps.length, 4);
+}
+
+function verifyLearnerCommunicationGuidance() {
+  const beginner = getLearnerCommunicationGuidance("beginner").join(" ");
+  const intermediate = getLearnerCommunicationGuidance("intermediate").join(" ");
+  const advanced = getLearnerCommunicationGuidance("advanced").join(" ");
+
+  assert.ok(beginner.includes("日常语言"));
+  assert.ok(beginner.includes("首次出现"));
+  assert.ok(intermediate.includes("容易理解"));
+  assert.ok(intermediate.includes("白话解释"));
+  assert.ok(advanced.includes("工程术语"));
+  assert.equal(shouldIncludeLearnerGlossary("beginner"), true);
+  assert.equal(shouldIncludeLearnerGlossary("intermediate"), true);
+  assert.equal(shouldIncludeLearnerGlossary("advanced"), false);
 }
 
 function verifyDetailedStudyPlanCacheIdentity() {
@@ -825,14 +953,15 @@ function verifyDetailedStudyPlanCacheIdentity() {
   const deepSeek = buildDetailedStudyPlanCacheMetadata(recommendation, 7, defaultPreference, {
     ...process.env,
     DEEPSEEK_API_KEY: "test-key",
-    DEEPSEEK_MODEL: "deepseek-test"
+    DEEPSEEK_PRO_MODEL: "deepseek-test"
   });
 
   assert.equal(base.key, repeated.key);
   assert.equal(base.inputHash, repeated.inputHash);
   assert.equal(base.promptVersion, detailedStudyPlanPromptVersion);
   assert.equal(base.schemaVersion, detailedStudyPlanSchemaVersion);
-  assert.equal(base.provider, "rule");
+  assert.equal(base.provider, "deepseek");
+  assert.equal(base.modelId, "deepseek-v4-pro");
   assert.notEqual(base.key, changedLevel.key);
   assert.equal(base.inputHash, changedLevel.inputHash);
   assert.notEqual(base.key, changedGoal.key);
@@ -926,6 +1055,15 @@ async function verifyDetailedStudyPlanCachePersistence() {
     assert.equal(generationCount, concurrentBefore + 1);
     assert.equal(concurrent[0].plan.id, concurrent[1].plan.id);
 
+    const complete14Days = await getOrCreateDetailedStudyPlan(recommendation, 14, {
+      preference: defaultPreference,
+      force: true,
+      generate
+    });
+    assert.equal(complete14Days.plan.generatedThroughDay, 14);
+    assert.equal(complete14Days.plan.days.length, 14);
+    assert.equal(complete14Days.plan.generationStatus, "complete");
+
     const currentDefault = await listCurrentDetailedStudyPlans([recommendation], defaultPreference);
     const currentPortfolio = await listCurrentDetailedStudyPlans([recommendation], changedPreference);
     assert.ok(currentDefault.some((plan) => plan.cache?.key === first.plan.cache?.key));
@@ -940,7 +1078,90 @@ async function verifyDetailedStudyPlanCachePersistence() {
   }
 }
 
-function verifyDetailedPlanFocusMode() {
+async function verifyStudyPlanBackgroundJobs() {
+  const previousJobStore = process.env.JOB_RUN_STORE_FILE;
+  const previousPlanStore = process.env.DETAILED_STUDY_PLAN_STORE_FILE;
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY;
+  const suffix = `${process.pid}-${Date.now()}`;
+  const jobStore = path.join(os.tmpdir(), `learning-radar-study-jobs-${suffix}.json`);
+  const planStore = path.join(os.tmpdir(), `learning-radar-study-plans-${suffix}.json`);
+  process.env.JOB_RUN_STORE_FILE = jobStore;
+  process.env.DETAILED_STUDY_PLAN_STORE_FILE = planStore;
+  delete process.env.DATABASE_URL;
+  delete process.env.DEEPSEEK_API_KEY;
+
+  const recommendation = getRecommendations(defaultPreference)[0];
+  const payloadBase = {
+    userId: "verify-study-user",
+    owner: recommendation.repo.owner,
+    repo: recommendation.repo.name,
+    repoFullName: recommendation.repo.fullName,
+    force: true,
+    preference: { level: defaultPreference.level, goal: defaultPreference.goal }
+  } as const;
+  let initialCalls = 0;
+
+  try {
+    const concurrent = await Promise.all([
+      enqueueDetailedStudyPlanJob({ ...payloadBase, duration: 7 }),
+      enqueueDetailedStudyPlanJob({ ...payloadBase, duration: 14 })
+    ]);
+    assert.equal(concurrent.filter((item) => item.created).length, 1);
+    assert.equal(concurrent[0].job.runId, concurrent[1].job.runId);
+    assert.equal(initialCalls, 0, "Enqueue must return before the slow generator starts.");
+
+    const executed = await executeDetailedStudyPlanJob(concurrent[0].job.runId, {
+      loadRecommendation: async () => recommendation,
+      generateInitial: async (item, duration, context) => {
+        initialCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return createRuleBasedDetailedStudyPlan(item, duration, context);
+      },
+      heartbeatIntervalMs: 5
+    });
+    assert.equal(executed.status, "success");
+    assert.deepEqual(executed.progress, { completed: 7, total: 7 });
+    assert.equal(executed.summary.generatedThroughDay, 7);
+    assert.equal(initialCalls, 1);
+    const storedPlan = (await listDetailedStudyPlans(recommendation.repo.id)).find((plan) => plan.duration === 7);
+    assert.equal(storedPlan?.days.length, 7);
+    assert.equal(storedPlan?.generationStatus, "complete");
+
+    const next = await enqueueDetailedStudyPlanJob({ ...payloadBase, duration: 14 });
+    assert.equal(next.created, true);
+    let releaseGeneration: () => void = () => {};
+    let signalStarted: () => void = () => {};
+    const generationGate = new Promise<void>((resolve) => { releaseGeneration = resolve; });
+    const generationStarted = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const runningExecution = executeDetailedStudyPlanJob(next.job.runId, {
+      loadRecommendation: async () => recommendation,
+      generateInitial: async (item, duration, context) => {
+        signalStarted();
+        await generationGate;
+        return createRuleBasedDetailedStudyPlan(item, duration, context);
+      }
+    });
+    await generationStarted;
+    const blockedByRunningStage = await enqueueDetailedStudyPlanJob({ ...payloadBase, duration: 3 });
+    assert.equal(blockedByRunningStage.created, false);
+    assert.equal(blockedByRunningStage.job.runId, next.job.runId);
+    releaseGeneration();
+    assert.equal((await runningExecution).status, "success");
+
+    const afterCompletion = await enqueueDetailedStudyPlanJob({ ...payloadBase, duration: 3 });
+    assert.equal(afterCompletion.created, true);
+  } finally {
+    await fs.rm(jobStore, { force: true });
+    await fs.rm(planStore, { force: true });
+    restoreEnv("JOB_RUN_STORE_FILE", previousJobStore);
+    restoreEnv("DETAILED_STUDY_PLAN_STORE_FILE", previousPlanStore);
+    restoreEnv("DATABASE_URL", previousDatabaseUrl);
+    restoreEnv("DEEPSEEK_API_KEY", previousDeepSeekKey);
+  }
+}
+
+async function verifyDetailedPlanFocusMode() {
   const recommendation = getRecommendations(defaultPreference)[0];
   const plan = createRuleBasedDetailedStudyPlan(recommendation, 3);
   const markup = renderToStaticMarkup(
@@ -968,6 +1189,36 @@ function verifyDetailedPlanFocusMode() {
   assert.ok(markup.includes("h-11 w-11"));
   assert.ok(markup.includes("缓存版本"));
   assert.ok(markup.includes(detailedStudyPlanPromptVersion));
+
+  const completeRulePlan = createRuleBasedDetailedStudyPlan(recommendation, 14);
+  const completeRuleMarkup = renderToStaticMarkup(
+    createElement(DetailedStudyPlanBuilder, {
+      owner: recommendation.repo.owner,
+      repo: recommendation.repo.name,
+      projectName: recommendation.repo.fullName,
+      language: recommendation.repo.primaryLanguage,
+      cloneGoal: recommendation.analysis.miniCloneScope.goal,
+      learnerLevel: defaultPreference.level,
+      learnerGoal: defaultPreference.goal,
+      initialPlans: [completeRulePlan]
+    })
+  );
+  assert.ok(completeRuleMarkup.includes("临时规则方案"));
+  assert.ok(completeRuleMarkup.includes("完整方案"));
+  assert.ok(completeRuleMarkup.includes("重新智能生成"));
+  assert.ok(completeRuleMarkup.includes("一次生成完整方案"));
+  assert.ok(completeRuleMarkup.includes("3 天"));
+  assert.ok(completeRuleMarkup.includes("7 天"));
+  assert.ok(completeRuleMarkup.includes("14 天"));
+  assert.ok(completeRuleMarkup.includes("术语白话解释"));
+
+  const builderSource = await fs.readFile(
+    path.join(process.cwd(), "components", "detailed-study-plan-builder.tsx"),
+    "utf8"
+  );
+  assert.equal(builderSource.includes("if (belongsToCurrentRepo) setSelectedDuration(duration)"), false);
+  assert.ok(builderSource.includes("请等待当前任务"));
+  assert.ok(builderSource.includes("[current?.step.id, plan.id, plan.days.length]"));
 }
 
 async function verifyNoKeyFallback() {
@@ -1770,6 +2021,7 @@ async function verifyHealthEndpoint() {
     status?: string;
     storage?: string;
     taskQueue?: { queued?: number; running?: number; staleRunning?: number };
+    studyPlanQueue?: { queued?: number; running?: number; staleRunning?: number };
   };
 
   assert.equal(response.status, 200);
@@ -1778,6 +2030,9 @@ async function verifyHealthEndpoint() {
   assert.equal(payload.taskQueue?.queued, 0);
   assert.equal(payload.taskQueue?.running, 0);
   assert.equal(payload.taskQueue?.staleRunning, 0);
+  assert.equal(payload.studyPlanQueue?.queued, 0);
+  assert.equal(payload.studyPlanQueue?.running, 0);
+  assert.equal(payload.studyPlanQueue?.staleRunning, 0);
 }
 
 async function verifyCandidateStore() {
@@ -1789,6 +2044,49 @@ async function verifyCandidateStore() {
 
   const candidate = await getRepositoryCandidate(candidates[0].owner, candidates[0].name);
   assert.equal(candidate?.id, candidates[0].id);
+}
+
+async function verifyCandidateLearningRecommendation() {
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const previousRepositoryStore = process.env.REPOSITORY_STORE_FILE;
+  const previousRadarRunStore = process.env.RADAR_RUN_STORE_FILE;
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "learning-radar-candidate-plan-"));
+  const repositoryStore = path.join(temporaryDirectory, "repositories.json");
+  const radarRunStore = path.join(temporaryDirectory, "radar-runs.json");
+  const candidate = {
+    ...seedRepos[0],
+    id: 990001,
+    owner: "candidate-only",
+    name: "study-plan-entry",
+    fullName: "candidate-only/study-plan-entry",
+    url: "https://github.com/candidate-only/study-plan-entry"
+  };
+
+  delete process.env.DATABASE_URL;
+  process.env.REPOSITORY_STORE_FILE = repositoryStore;
+  process.env.RADAR_RUN_STORE_FILE = radarRunStore;
+  try {
+    await fs.writeFile(
+      repositoryStore,
+      `${JSON.stringify({ repositories: { [String(candidate.id)]: candidate }, snapshots: {} })}\n`,
+      "utf8"
+    );
+    await fs.writeFile(radarRunStore, `${JSON.stringify({ runs: [] })}\n`, "utf8");
+    const recommendation = await getLearningRecommendation(candidate.owner, candidate.name, {
+      level: "beginner",
+      goal: "portfolio"
+    });
+
+    assert.equal(recommendation?.repo.fullName, candidate.fullName);
+    assert.equal(recommendation?.analysisTrace?.source, "rule");
+    assert.equal(recommendation?.rank, 0);
+    assert.ok((recommendation?.analysis.miniCloneScope.goal.length ?? 0) > 0);
+  } finally {
+    restoreEnv("DATABASE_URL", previousDatabaseUrl);
+    restoreEnv("REPOSITORY_STORE_FILE", previousRepositoryStore);
+    restoreEnv("RADAR_RUN_STORE_FILE", previousRadarRunStore);
+    await fs.rm(temporaryDirectory, { recursive: true, force: true });
+  }
 }
 
 function restoreEnv(name: string, value: string | undefined) {

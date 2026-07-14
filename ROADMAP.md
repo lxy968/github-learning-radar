@@ -24,7 +24,7 @@
 - DeepSeek OpenAI-compatible 分析入口、超时、批次熔断和调用数量限制。
 - 刷新状态跨页面保持，刷新阶段和进度可查询。
 - 具体学习方案独立页面，支持 3/7/14 天、圆圈点亮、进度保存和 Markdown 复制。
-- 具体学习方案按需生成，缓存命中不重复调用 AI；AI 失败时使用仓库相关规则方案。
+- 具体学习方案按需在后台生成，3/7/14 天都由一次模型调用返回完整周期；缓存命中不重复调用 AI，失败时显示简短错误且不把规则内容冒充 Pro 输出。
 - README HTML 与历史残缺标签清洗。
 - 生产环境手动刷新使用 `ADMIN_SECRET` 保护。
 - 详细方案生成限流、错误脱敏和全局成本保护。
@@ -498,6 +498,33 @@
 
 下一步：进入 8.1，建立开源发布前仓库卫生检查，确认忽略规则、环境变量模板、License/贡献/安全文档、CI、部署文档和发布检查命令；Git 工具可用后再初始化仓库和生成首个提交。
 
+### 7.7 第一阶段内容质量与模型分工优化
+
+**状态：本地实现、完整方案后台回归、单次 Flash 与单次 3 天 Pro 受控 smoke 已完成（2026-07-13）；尚未提交或推送**
+
+本地实现：
+
+- DeepSeek 按任务分工：`deepseek-v4-flash` 负责候选卡片的一句话简介、学习价值和初步 Mini 范围；`deepseek-v4-pro` 只在用户按需生成 3/7/14 天具体学习方案时使用。旧 `DEEPSEEK_MODEL` 只作为 Pro 配置兼容项。
+- 候选卡片直接显示分析结果中的 `oneLineSummary`，不再由前端根据语言、类别和两个通用功能重新拼接固定句式；“为什么推荐”优先显示仓库分析产生的 `whyLearn`。
+- Flash 提示词升级到 v3：除原有仓库专属摘要、Mini 边界和证据约束外，按学习水平切换表达。初级使用日常语言并解释首次出现的术语；中级保持白话主线并解释常见术语在当前仓库中的作用；高级可直接使用工程术语并强调架构与权衡。
+- Pro 详细方案提示词升级到 v5，schema/规则身份为 v4。3/7/14 天都一次性生成完整周期；默认超时提高到 300 秒、允许配置到 600 秒；项目不再额外设置输出 Token 上限，交由 DeepSeek 模型自身容量控制；初级/中级方案附术语白话解释。
+- 学习方案使用持久化后台任务：Web 立即返回 `202` 和 `runId`，Worker 用一次模型调用生成所选完整周期，刷新页面后继续轮询恢复。3/7/14 天显示为三张独立卡片，同一匿名会话严格串行，但状态轮询不再强制切换用户当前查看的卡片或展开天数。
+- `migrations/0014_study_plan_job_serialization.sql` 为生产 PostgreSQL 增加同一用户活跃学习方案任务唯一约束；本地 JSON 入队使用进程锁，普通测试覆盖并发入队只创建一个任务、慢生成不阻塞入队、一次完整保存和刷新恢复。Windows 本地文件替换新增锁冲突重试与安全回退，避免 `EPERM rename` 中断任务。
+- Web 不再需要 `DEEPSEEK_API_KEY`，真实 Flash/Pro 调用统一由 Worker 完成；详细方案缓存按 Pro 模型身份而不是按 Web 是否持有密钥计算，避免 Worker 生成后 Web 无法读取。
+- Pro 失败不会生成或补写宽泛规则天数，错误对用户使用简短文案，内部文件路径不再通过任务 API 暴露。
+- 规则 fallback 根据 topics、仓库描述、根目录和依赖识别 MCP、Agent、CLI、代码生成、工作流、UI、检索、存储、API 等能力，形成仓库差异化摘要与 Mini 目标；测试断言不同仓库不能得到相同内容。
+- README 清洗新增裸露 URL 过滤；首页卡片、候选详情和项目详情在展示历史数据时再次清洗，折叠区改名为“README 清洗摘录”并说明已隐藏徽章、图片地址和冗长链接。
+
+验证证据：普通验证未调用 DeepSeek。TypeScript、逻辑验证、严格仓库卫生、Next.js 生产构建、standalone 产物准备和 HTTP 回归全部通过；README 徽章样例、模型路由、三级表达约束、历史内容升级、规则内容差异化、后台串行任务、3/7/14 一次完整生成和三卡片层级均由模拟测试覆盖。生产构建浏览器实跑确认：切到 7 天卡片并等待状态查询后仍保持在 7 天，不再被任务轮询抢回；390×844 卡片无横向溢出，控制台无错误。浏览器验收没有点击生成按钮，因此没有调用 DeepSeek 或消耗 Token。
+
+2026-07-13 受控 Flash smoke：第一次限制为 3 个推荐、最多 2 次 Flash，GitHub 4 条查询成功发现 20 个候选，但首个模型响应为不完整 JSON，触发整批熔断和规则 fallback；本地指标因解析前失败记录为 0 Token，但模型已经返回内容，不能据此断言供应商没有计费。随后启用 DeepSeek V4 官方 JSON Output，并把第二次调用限制为 1 次 Flash、0 次 Pro；刷新在 31.49 秒内成功，最终保存 3 个推荐，其中 1 个由 `deepseek-v4-flash` 生成、2 个使用规则分析，记录输入 1468、输出 1687、合计 3155 Token。Flash 为 `NousResearch/hermes-agent` 生成了仓库专属简介与 CLI 代理 Mini 范围；Pro 仍未调用。
+
+2026-07-13 受控 Pro smoke：用户手动生成失败记录表明问题不是超时，而是一次 `glossary` 超过 6 项、一次响应未能直接解析为 JSON。解析层随后增加围栏/前后文字中的平衡 JSON 提取、数组和字段长度安全收敛，并在 Prompt 中明确术语与准备项上限。对 `NousResearch/hermes-agent`、初级、作品集目标执行一次不写缓存的真实 3 天 `deepseek-v4-pro` smoke，62.98 秒内成功返回完整 3 天方案，provider 报告输入 1507、输出 4616、合计 6123 Token。项目随后按用户要求移除学习方案的应用层输出 Token 上限，改由 DeepSeek 模型自身容量控制；7/14 天没有继续真实调用，不能把 3 天结果外推为长周期已通过。
+
+2026-07-13 首页七项 Flash 优化：默认推荐数由 6 调整为 7，默认 Flash 分析预算由 3 调整为 7，因此最终展示的七项都会尝试 Flash，只有供应商失败时才使用规则回退。受控刷新成功完成 4 条 GitHub 查询，发现 48 个候选并选出 7 个；首轮 7 项均发起 `deepseek-v4-flash`，5 项成功、2 项返回 `No output generated`，随后只对这 2 项定向重试并全部成功，没有重复调用已成功的 5 项。最终快照 `manual-seven-flash-1783956751654` 为 `github/success`，7/7 分析来源均为 AI，累计记录输入 10,435、输出 10,518、合计 20,953 Token，Pro 未调用。类型检查、逻辑验证、严格仓库卫生、生产构建和完整 HTTP 回归通过；当前开发服务的 `/api/recommendations` 已确认返回 7 项且成功模型均为 `deepseek-v4-flash`。内置浏览器本次无法接管现有标签页，因此视觉效果保留给维护者刷新当前首页人工确认，不把接口证据冒充肉眼验收。
+
+2026-07-14 候选学习入口与界面去模型化：任何已保存到候选池的仓库都能进入 3/7/14 天具体学习方案页，不再要求先进入当日最高分推荐。未入选候选先依据已保存的 README、技术栈和工程信号构造内置分析上下文；打开页面不调用模型，只有用户点击生成才创建严格串行的后台任务。学习方案 API、任务 Worker 和缓存读取统一使用候选解析入口，普通验证覆盖只存在于候选池的仓库，生产 HTTP 回归进一步确认候选详情、方案页和任务 `202` 入队全链路；测试环境没有运行 Worker，因此没有真实 AI 调用或 Token。面向用户的 `Flash`、`Pro`、供应商和模型 ID 已改为“智能分析 / 智能生成 / 内置规则”等功能说明，内部仍按既有安全约束只配置 DeepSeek。原“项目库”没有独立存储或筛选含义，只是重复渲染最新推荐，现已从导航与 sitemap 合并到候选项目，`/library` 保留兼容跳转。类型检查、逻辑验证、严格仓库卫生、生产构建与完整 HTTP 回归全部通过。
+
 ## 八、正式开源与发布阶段（P1）
 
 当前已经有 CI、License、贡献指南和安全文档，但真正发布前还需要：
@@ -541,7 +568,7 @@
 完成证据：
 
 - [CHANGELOG.md](./CHANGELOG.md) 使用 `Unreleased` 记录当前能力、安全变化和已知限制，没有伪造已经发布的版本日期。
-- [RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md) 可作为首个 GitHub Release 草案，包含核心能力、最低部署要求、迁移 0001–0013、验证证据、发布前门禁和已知限制。
+- [RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md) 可作为首个 GitHub Release 草案，包含核心能力、最低部署要求、迁移 0001–0014、验证证据、发布前门禁和已知限制。
 - README 显示 `v0.1.0 Release Candidate` 状态，增加从浏览器、任务队列、Worker、GitHub、DeepSeek/规则 fallback 到 `radar_runs` 的架构图，并链接数据模型、部署和发布资料。
 - README 明确真实 Git、PostgreSQL、多 Worker、浏览器、仓库/Demo/截图和匿名身份限制；不把 HTTP/构建验证写成真实设备或数据库证据。
 - [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md) 覆盖本地 Git、GitHub 安全设置、数据库/部署、受控 smoke test 和发布后运维。
@@ -563,7 +590,7 @@
 - `Dockerfile` 提供非 root `web` 和 `worker` target。Web 含进程可达健康检查，Worker 仅安装生产依赖并运行持久化任务消费者；`tsx` 因 Worker 运行时确实需要而移入生产依赖。
 - `.dockerignore` 排除环境变量、本地数据、Git 元数据、缓存和常见私钥；仓库卫生脚本会校验这些规则、两个 target、非 root 用户、standalone 启动方式和 Worker 运行依赖。
 - `compose.integration.yml` 提供只面向本机/CI 的 PostgreSQL 16、迁移和集成测试服务，使用明确的本地固定账号，不注入 GitHub Token 或 DeepSeek Key。
-- `scripts/postgres-integration.ts` 需要 `ALLOW_POSTGRES_INTEGRATION_TEST=1`，并拒绝数据库名不包含 `test`/`integration` 的目标；测试覆盖迁移 0013、雷达快照事务、三类规范化投影的内部仓库 ID、候选读取、规则方案缓存和并发 Worker 原子领取，最后事务清理唯一夹具。
+- `scripts/postgres-integration.ts` 需要 `ALLOW_POSTGRES_INTEGRATION_TEST=1`，并拒绝数据库名不包含 `test`/`integration` 的目标；测试要求迁移 0014、覆盖雷达快照事务、三类规范化投影的内部仓库 ID、候选读取、方案缓存和并发 Worker 原子领取，最后事务清理唯一夹具。
 - CI 新增独立容器任务：构建 Web 镜像、构建 Worker 测试镜像、启动临时 PostgreSQL、执行迁移与 `pnpm db:integration`，最后无条件删除临时 volume。该任务不需要也不会读取 GitHub/DeepSeek Secret。
 - [DEPLOYMENT.md](./DEPLOYMENT.md)、README、Changelog、Release Notes 与发布检查表已写明容器命令、测试数据库边界和生产发布顺序。
 

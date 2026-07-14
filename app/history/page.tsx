@@ -35,11 +35,11 @@ export default async function HistoryPage() {
                     GitHub 查询失败：{run.metrics.discoveryFailureCount}/{run.metrics.discoveryQueryCount}
                   </div>
                   <div className="rounded-md bg-slate-50 px-3 py-2">
-                    DeepSeek 成功：{run.metrics.aiSuccessCount}/{run.metrics.aiRequestedCount}
+                    智能分析成功：{run.metrics.aiSuccessCount}/{run.metrics.aiRequestedCount}
                   </div>
-                  <div className="rounded-md bg-slate-50 px-3 py-2">DeepSeek fallback：{run.metrics.aiFallbackCount}</div>
+                  <div className="rounded-md bg-slate-50 px-3 py-2">规则回退：{run.metrics.aiFallbackCount}</div>
                   <div className="rounded-md bg-slate-50 px-3 py-2">
-                    DeepSeek Token：{run.metrics.totalTokens.toLocaleString("zh-CN")}
+                    模型 Token：{run.metrics.totalTokens.toLocaleString("zh-CN")}
                   </div>
                 </div>
               ) : null}

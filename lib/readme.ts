@@ -19,8 +19,11 @@ export function sanitizeReadmeExcerpt(value: string, maxLength = 1800) {
       const alt = attributes.match(/\balt\s*=\s*(["'])(.*?)\1/i)?.[2] ?? "";
       return ` ${alt} `;
     })
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, " $1 ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, " $1 ")
+    .replace(/\bhttps?:\/\/[^\s<>"\]]+/gi, " ")
+    .replace(/\bwww\.[^\s<>"\]]+/gi, " ")
+    .replace(/(?:^|\s)\.\/(?:license|readme)(?:\.[a-z0-9]+)?(?=\s|$)/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/<\/?[a-z][\w-]*\/?/gi, " ")
     .replace(

@@ -18,12 +18,16 @@ main().catch((error) => {
 
 async function main() {
   const { runRadarWorkerOnce } = await import("../lib/radar-worker");
+  const { runStudyPlanWorkerOnce } = await import("../lib/study-plan-worker");
   if (!process.env.DATABASE_URL && process.env.NODE_ENV === "production") {
     throw new Error("DATABASE_URL is required for the production radar worker.");
   }
 
   do {
-    const result = await runRadarWorkerOnce({ staleAfterMs });
+    const studyPlanResult = await runStudyPlanWorkerOnce({
+      staleAfterMs: readBoundedInteger(process.env.STUDY_PLAN_JOB_STALE_AFTER_MS, 10 * 60_000, 5 * 60_000, 60 * 60_000)
+    });
+    const result = studyPlanResult.status === "processed" ? studyPlanResult : await runRadarWorkerOnce({ staleAfterMs });
     if (result.recovery.requeuedRunIds.length || result.recovery.failedRunIds.length) {
       console.log(
         `recovered=${result.recovery.requeuedRunIds.length} failed_stale=${result.recovery.failedRunIds.length}`

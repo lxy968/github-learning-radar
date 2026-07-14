@@ -171,10 +171,10 @@ function formatAiRunStatus(notes: string[]) {
   }
 
   if (notes.some((note) => note.includes("DeepSeek is not configured") || note.includes("AI provider is not configured"))) {
-    return "未配置 DeepSeek，已使用规则 fallback";
+    return "未配置智能分析服务，已使用内置规则";
   }
 
-  return "DeepSeek 分析已完成";
+  return "智能分析已完成";
 }
 
 function formatCategory(value: RadarCategory | "none") {

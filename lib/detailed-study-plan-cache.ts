@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { getConfiguredAiModel } from "@/lib/ai/provider";
+import { getAiModelId } from "@/lib/ai/provider";
 import { getRepoSignal } from "@/lib/repository-signals";
 import type {
   DetailedStudyPlan,
@@ -9,9 +9,9 @@ import type {
   UserPreference
 } from "@/lib/types";
 
-export const detailedStudyPlanPromptVersion = "detailed-plan-prompt-v2";
-export const detailedStudyPlanSchemaVersion = "detailed-plan-schema-v2";
-export const detailedStudyPlanRuleModel = "rule-v2";
+export const detailedStudyPlanPromptVersion = "detailed-plan-prompt-v5";
+export const detailedStudyPlanSchemaVersion = "detailed-plan-schema-v4";
+export const detailedStudyPlanRuleModel = "rule-v4";
 
 export type DetailedStudyPlanGenerationContext = {
   preference: Pick<UserPreference, "level" | "goal">;
@@ -36,9 +36,8 @@ export function buildDetailedStudyPlanCacheMetadata(
   preference: Pick<UserPreference, "level" | "goal">,
   env: NodeJS.ProcessEnv = process.env
 ): DetailedStudyPlanCacheMetadata {
-  const configuredModel = getConfiguredAiModel(env);
-  const provider = configuredModel ? "deepseek" : "rule";
-  const modelId = configuredModel?.modelId ?? detailedStudyPlanRuleModel;
+  const provider = "deepseek";
+  const modelId = getAiModelId("detailed-study-plan", env);
   const inputHash = sha256(
     JSON.stringify({
       duration,
@@ -81,9 +80,8 @@ export function filterDetailedStudyPlansForActiveProfile(
   preference: Pick<UserPreference, "level" | "goal">,
   env: NodeJS.ProcessEnv = process.env
 ) {
-  const configuredModel = getConfiguredAiModel(env);
-  const provider = configuredModel ? "deepseek" : "rule";
-  const modelId = configuredModel?.modelId ?? detailedStudyPlanRuleModel;
+  const provider = "deepseek";
+  const modelId = getAiModelId("detailed-study-plan", env);
   return plans.filter(
     (plan) =>
       plan.cache?.preferenceLevel === preference.level &&

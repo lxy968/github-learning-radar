@@ -1,6 +1,8 @@
 import { seedAnalyses, seedRepos, defaultPreference } from "@/lib/seed-data";
 import { scoreRepository } from "@/lib/scoring";
 import { getLatestRadarRun } from "@/lib/radar-runs";
+import { createRuleBasedAnalysis, upgradeLegacyRecommendationContent } from "@/lib/ai/analyze";
+import { getRepositoryCandidate } from "@/lib/repository-store";
 import type { RadarCategory, RadarRecommendation, UserPreference } from "@/lib/types";
 
 export function getRecommendations(preference: UserPreference = defaultPreference): RadarRecommendation[] {
@@ -32,11 +34,16 @@ export function getRecommendation(owner: string, repoName: string) {
 export async function getCurrentRecommendations(preference?: UserPreference) {
   const latestRun = await getLatestRadarRun();
   const recommendations = latestRun?.recommendations ?? getRecommendations(preference ?? defaultPreference);
-  if (!preference || !latestRun) return recommendations;
-  return recommendations
-    .map((item) => ({ ...item, score: scoreRepository(item.repo, preference) }))
-    .sort((a, b) => b.score.finalScore - a.score.finalScore)
-    .map((item, index) => ({ ...item, rank: index + 1 }));
+  const activePreference = preference ?? latestRun?.preference ?? defaultPreference;
+  const ranked =
+    preference && latestRun
+      ? recommendations
+          .map((item) => ({ ...item, score: scoreRepository(item.repo, preference) }))
+          .sort((a, b) => b.score.finalScore - a.score.finalScore)
+          .map((item, index) => ({ ...item, rank: index + 1 }))
+      : recommendations;
+
+  return ranked.map((item) => upgradeLegacyRecommendationContent(item, activePreference));
 }
 
 export async function getCurrentRecommendation(owner: string, repoName: string) {
@@ -44,6 +51,35 @@ export async function getCurrentRecommendation(owner: string, repoName: string) 
   const recommendations = await getCurrentRecommendations();
 
   return recommendations.find((item) => item.repo.fullName.toLowerCase() === fullName);
+}
+
+export async function getLearningRecommendation(
+  owner: string,
+  repoName: string,
+  preference: UserPreference | Pick<UserPreference, "level" | "goal"> = defaultPreference
+): Promise<RadarRecommendation | null> {
+  const current = await getCurrentRecommendation(owner, repoName);
+  if (current) return current;
+
+  const fullName = `${owner}/${repoName}`.toLowerCase();
+  const repo =
+    (await getRepositoryCandidate(owner, repoName)) ??
+    seedRepos.find((item) => item.fullName.toLowerCase() === fullName) ??
+    null;
+  if (!repo) return null;
+
+  const activePreference: UserPreference = { ...defaultPreference, ...preference };
+  const score = scoreRepository(repo, activePreference);
+  return {
+    repo,
+    score,
+    analysis: createRuleBasedAnalysis(repo, score, activePreference),
+    rank: 0,
+    analysisTrace: {
+      source: "rule",
+      providerAttempts: []
+    }
+  };
 }
 
 export function getRadarStats(recommendations = getRecommendations()) {

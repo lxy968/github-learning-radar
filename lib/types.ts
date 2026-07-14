@@ -106,7 +106,7 @@ export type DetailedStudyPlan = {
   repoId: number;
   repoFullName: string;
   duration: DetailedStudyPlanDuration;
-  source: "ai" | "rule";
+  source: "ai" | "rule" | "mixed";
   provider?: string;
   modelId?: string;
   fallbackReason?: "not-configured" | "provider-error";
@@ -119,7 +119,10 @@ export type DetailedStudyPlan = {
   generatedAt: string;
   summary: string;
   prerequisites: string[];
+  glossary?: Array<{ term: string; explanation: string }>;
   days: DetailedStudyDay[];
+  generatedThroughDay?: number;
+  generationStatus?: "partial" | "complete";
 };
 
 export type DetailedStudyPlanCacheMetadata = {

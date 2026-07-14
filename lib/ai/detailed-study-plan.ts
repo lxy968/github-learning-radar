@@ -1,7 +1,8 @@
-import { generateText } from "ai";
+import { generateText, NoObjectGeneratedError, Output } from "ai";
 import { z } from "zod";
 import { getConfiguredAiModel, type AiModelConfig } from "@/lib/ai/provider";
 import { sanitizeReadmeExcerpt } from "@/lib/readme";
+import { getLearnerCommunicationGuidance, shouldIncludeLearnerGlossary } from "@/lib/learning-language";
 import { getRepoSignal } from "@/lib/repository-signals";
 import { classifyOperationalError } from "@/lib/operational-errors";
 import {
@@ -34,11 +35,20 @@ const detailedDaySchema = z.object({
   steps: z.array(detailedStepSchema).min(2).max(4)
 });
 
-function createDetailedContentSchema(duration: DetailedStudyPlanDuration) {
+function createDetailedContentSchema(dayCount: number, startDay: number, endDay: number) {
   return z.object({
     summary: z.string().min(8).max(400),
     prerequisites: z.array(z.string().min(2).max(160)).min(2).max(8),
-    days: z.array(detailedDaySchema).length(duration)
+    glossary: z.array(z.object({
+      term: z.string().min(1).max(60),
+      explanation: z.string().min(4).max(180)
+    })).max(6).default([]),
+    days: z.array(detailedDaySchema).length(dayCount).superRefine((days, issueContext) => {
+      const expected = Array.from({ length: dayCount }, (_, index) => startDay + index);
+      if (days.some((day, index) => day.day !== expected[index] || day.day > endDay)) {
+        issueContext.addIssue({ code: "custom", message: `days 必须连续覆盖 Day ${startDay}-${endDay}` });
+      }
+    })
   });
 }
 
@@ -51,12 +61,16 @@ export async function generateDetailedStudyPlan(
     recommendation,
     duration,
     defaultPreference
-  )
+  ),
+  options: { allowRuleFallback?: boolean } = {}
 ): Promise<DetailedStudyPlan> {
   const fallback = createRuleBasedDetailedStudyPlan(recommendation, duration, context);
-  const configuredModel = getConfiguredAiModel();
+  const configuredModel = getConfiguredAiModel("detailed-study-plan");
 
   if (!configuredModel) {
+    if (options.allowRuleFallback === false) {
+      throw new Error("未配置 DeepSeek Pro，无法生成 AI 学习方案。");
+    }
     return {
       ...fallback,
       fallbackReason: "not-configured",
@@ -65,7 +79,7 @@ export async function generateDetailedStudyPlan(
   }
 
   const controller = new AbortController();
-  const timeoutMs = readBoundedInteger(process.env.STUDY_PLAN_AI_TIMEOUT_MS, 35_000, 5_000, 120_000);
+  const timeoutMs = readBoundedInteger(process.env.STUDY_PLAN_AI_TIMEOUT_MS, 300_000, 30_000, 600_000);
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -74,6 +88,9 @@ export async function generateDetailedStudyPlan(
       recommendation,
       duration,
       context,
+      1,
+      duration,
+      undefined,
       controller.signal
     );
 
@@ -93,6 +110,9 @@ export async function generateDetailedStudyPlan(
     });
   } catch (error) {
     const classified = classifyOperationalError(error, { system: "ai" });
+    if (options.allowRuleFallback === false) {
+      throw new Error(`DeepSeek Pro 生成完整 ${duration} 天方案失败：${classified.summary}`);
+    }
     return {
       ...fallback,
       provider: configuredModel.provider,
@@ -117,61 +137,266 @@ export async function generateDetailedStudyPlan(
   }
 }
 
+export async function extendDetailedStudyPlan(
+  recommendation: RadarRecommendation,
+  existingPlan: DetailedStudyPlan,
+  context: DetailedStudyPlanGenerationContext
+): Promise<DetailedStudyPlan> {
+  const generatedThroughDay = getGeneratedThroughDay(existingPlan);
+  if (generatedThroughDay >= existingPlan.duration) return normalizePlanStageMetadata(existingPlan);
+
+  const configuredModel = getConfiguredAiModel("detailed-study-plan");
+  if (!configuredModel) {
+    throw new Error("未配置 DeepSeek Pro，不能生成下一阶段；已有学习内容已保留。");
+  }
+
+  const startDay = generatedThroughDay + 1;
+  const endDay = Math.min(existingPlan.duration, startDay + 2);
+  const controller = new AbortController();
+  const timeoutMs = readBoundedInteger(process.env.STUDY_PLAN_AI_TIMEOUT_MS, 300_000, 30_000, 600_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const generated = await generateDeepSeekContent(
+      configuredModel,
+      recommendation,
+      existingPlan.duration,
+      context,
+      startDay,
+      endDay,
+      existingPlan,
+      controller.signal
+    );
+    const newDays = addStableStepIds(generated.content.days);
+    const providerAttempts = [
+      ...(existingPlan.providerAttempts ?? []),
+      {
+        provider: "deepseek" as const,
+        modelId: configuredModel.modelId,
+        status: "success" as const,
+        usage: generated.usage
+      }
+    ];
+
+    return {
+      ...existingPlan,
+      source: existingPlan.source === "rule" ? "mixed" : existingPlan.source,
+      provider: configuredModel.provider,
+      modelId: configuredModel.modelId,
+      providerAttempts,
+      generatedAt: new Date().toISOString(),
+      glossary: mergeGlossaries(existingPlan.glossary, generated.content.glossary),
+      days: [...existingPlan.days, ...newDays].sort((a, b) => a.day - b.day),
+      generatedThroughDay: endDay,
+      generationStatus: endDay >= existingPlan.duration ? "complete" : "partial"
+    };
+  } catch (error) {
+    const classified = classifyOperationalError(error, { system: "ai" });
+    throw new Error(`DeepSeek Pro 生成 Day ${startDay}-${endDay} 失败：${classified.summary}。已有内容已保留。`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function generateDeepSeekContent(
   configuredModel: AiModelConfig,
   recommendation: RadarRecommendation,
   duration: DetailedStudyPlanDuration,
   context: DetailedStudyPlanGenerationContext,
+  startDay: number,
+  endDay: number,
+  existingPlan: DetailedStudyPlan | undefined,
   abortSignal: AbortSignal
 ) {
-  const schema = createDetailedContentSchema(duration);
-  const { text, usage } = await generateText({
-    model: configuredModel.model,
-    abortSignal,
-    temperature: 0.2,
-    prompt: [
-      ...buildPrompt(recommendation, duration, context),
-      "DeepSeek 当前不使用 response_format。只返回 JSON 对象，不要 Markdown、代码围栏或解释。",
-      `days 必须恰好包含 ${duration} 项，每天必须包含 2-4 个具体步骤。`,
-      "JSON 结构示例：",
-      JSON.stringify({
-        summary: "string",
-        prerequisites: ["2-8 strings"],
-        days: [
-          {
-            day: 1,
-            goal: "string",
-            outcome: "string",
-            steps: [
-              {
-                title: "string",
-                purpose: "string",
-                actions: ["2-5 strings"],
-                references: ["1-6 real files, directories or commands from the input"],
-                verification: "string",
-                deliverable: "string",
-                estimatedMinutes: 60
-              }
-            ]
-          }
-        ]
-      })
-    ].join("\n")
-  });
-  const jsonText = extractJsonObject(text);
-  const parsed = schema.safeParse(JSON.parse(jsonText));
+  const dayCount = endDay - startDay + 1;
+  const schema = createDetailedContentSchema(dayCount, startDay, endDay);
+  let output: unknown;
+  let normalizedUsage: ReturnType<typeof normalizeUsage>;
+  try {
+    const generated = await generateText({
+      model: configuredModel.model,
+      abortSignal,
+      maxRetries: 1,
+      output: Output.json(),
+      temperature: 0.2,
+      prompt: [
+        ...buildPrompt(recommendation, duration, context, startDay, endDay, existingPlan),
+        "API 已启用 JSON Output。只返回 JSON 对象，不要 Markdown、代码围栏或解释。",
+        `glossary 最多 6 项；prerequisites 最多 8 项。days 必须恰好包含 ${dayCount} 项，连续覆盖 Day ${startDay}-${endDay}，每天恰好包含 2 个具体步骤。文字要精简，但操作、验证方法和交付物必须完整。`,
+        "JSON 结构示例：",
+        JSON.stringify({
+          summary: "string",
+          prerequisites: ["2-8 strings"],
+          glossary: [{ term: "technical term", explanation: "plain Chinese explanation" }],
+          days: [
+            {
+              day: 1,
+              goal: "string",
+              outcome: "string",
+              steps: [
+                {
+                  title: "string",
+                  purpose: "string",
+                  actions: ["2-5 strings"],
+                  references: ["1-6 real files, directories or commands from the input"],
+                  verification: "string",
+                  deliverable: "string",
+                  estimatedMinutes: 60
+                }
+              ]
+            }
+          ]
+        })
+      ].join("\n")
+    });
+    output = generated.output;
+    normalizedUsage = normalizeUsage(generated.usage);
+  } catch (error) {
+    if (!NoObjectGeneratedError.isInstance(error) || !error.text?.trim()) throw error;
+    try {
+      output = parseDetailedStudyPlanModelJson(error.text);
+      normalizedUsage = normalizeUsage(error.usage ?? {});
+    } catch (parseError) {
+      const finishReason = error.finishReason ?? "unknown";
+      throw new Error(
+        `DeepSeek 返回内容无法解析（finishReason=${finishReason}, chars=${error.text.length}）：${parseError instanceof Error ? parseError.message : "invalid JSON"}`,
+        { cause: error }
+      );
+    }
+  }
+  const parsed = schema.safeParse(normalizeDetailedStudyPlanModelContent(output, startDay, endDay));
 
   if (!parsed.success) {
     throw new Error(`Detailed study plan validation failed: ${summarizeZodIssues(parsed.error.issues)}`);
   }
 
-  return { content: parsed.data, usage: normalizeUsage(usage) };
+  return { content: parsed.data, usage: normalizedUsage };
+}
+
+export function parseDetailedStudyPlanModelJson(text: string) {
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+    if (fenced) {
+      try {
+        return JSON.parse(fenced) as unknown;
+      } catch {
+        // Continue with balanced-object extraction below.
+      }
+    }
+  }
+
+  const extracted = extractBalancedJsonObject(trimmed);
+  if (!extracted) throw new Error("没有找到完整 JSON 对象，响应可能被截断。");
+  return JSON.parse(extracted) as unknown;
+}
+
+export function normalizeDetailedStudyPlanModelContent(value: unknown, startDay: number, endDay: number) {
+  if (!isRecord(value)) return value;
+  return {
+    ...value,
+    summary: clampModelString(value.summary, 400),
+    prerequisites: clampModelStringArray(value.prerequisites, 8, 160),
+    glossary: Array.isArray(value.glossary)
+      ? value.glossary.slice(0, 6).map((item) => isRecord(item)
+        ? {
+            ...item,
+            term: clampModelString(item.term, 60),
+            explanation: clampModelString(item.explanation, 180)
+          }
+        : item)
+      : value.glossary,
+    days: Array.isArray(value.days)
+      ? value.days
+          .map(normalizeModelDay)
+          .filter((day) => isRecord(day) && typeof day.day === "number" && day.day >= startDay && day.day <= endDay)
+          .sort((left, right) => Number((left as Record<string, unknown>).day) - Number((right as Record<string, unknown>).day))
+          .slice(0, endDay - startDay + 1)
+      : value.days
+  };
+}
+
+function normalizeModelDay(value: unknown) {
+  if (!isRecord(value)) return value;
+  return {
+    ...value,
+    day: coerceModelNumber(value.day),
+    goal: clampModelString(value.goal, 100),
+    outcome: clampModelString(value.outcome, 240),
+    steps: Array.isArray(value.steps) ? value.steps.slice(0, 4).map(normalizeModelStep) : value.steps
+  };
+}
+
+function normalizeModelStep(value: unknown) {
+  if (!isRecord(value)) return value;
+  const estimatedMinutes = coerceModelNumber(value.estimatedMinutes);
+  return {
+    ...value,
+    title: clampModelString(value.title, 80),
+    purpose: clampModelString(value.purpose, 240),
+    actions: clampModelStringArray(value.actions, 5, 240),
+    references: clampModelStringArray(value.references, 6, 160),
+    verification: clampModelString(value.verification, 240),
+    deliverable: clampModelString(value.deliverable, 160),
+    estimatedMinutes: typeof estimatedMinutes === "number"
+      ? Math.max(10, Math.min(240, Math.round(estimatedMinutes)))
+      : estimatedMinutes
+  };
+}
+
+function extractBalancedJsonObject(text: string) {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') inString = true;
+    else if (character === "{") depth += 1;
+    else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return null;
+}
+
+function clampModelString(value: unknown, maxLength: number) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : value;
+}
+
+function clampModelStringArray(value: unknown, maxItems: number, maxLength: number) {
+  return Array.isArray(value)
+    ? value.slice(0, maxItems).map((item) => clampModelString(item, maxLength))
+    : value;
+}
+
+function coerceModelNumber(value: unknown) {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function buildPrompt(
   recommendation: RadarRecommendation,
   duration: DetailedStudyPlanDuration,
-  context: DetailedStudyPlanGenerationContext
+  context: DetailedStudyPlanGenerationContext,
+  startDay: number,
+  endDay: number,
+  existingPlan?: DetailedStudyPlan
 ) {
   const { repo, score, analysis } = recommendation;
   const compactRepo = {
@@ -202,7 +427,13 @@ function buildPrompt(
 
   return [
     "你是 GitHub 项目的实战学习教练。只能使用输入中的仓库证据，不允许浏览网页或虚构文件。",
-    `为当前仓库生成 ${duration} 天的 mini 复刻学习方案。每天 2-4 个步骤，每个步骤都必须有具体操作、引用、验证方式和交付物。`,
+    startDay === 1 && endDay === duration
+      ? `一次性生成完整 ${duration} 天方案，连续覆盖 Day 1-${duration}，不要遗漏或留到后续生成。每一天恰好包含 2 个步骤。`
+      : `目标是 ${duration} 天方案，本次只生成 Day ${startDay}-${endDay}，不要输出其他天。每一天恰好包含 2 个步骤。`,
+    ...getLearnerCommunicationGuidance(context.preference.level),
+    shouldIncludeLearnerGlossary(context.preference.level)
+      ? "为本阶段实际使用的陌生技术名词提供 glossary；解释要像给第一次接触该概念的人说话。"
+      : "glossary 可以为空，除非某个仓库专用名词不解释就容易误解。",
     "references 只能引用输入 detectedFiles 中真实出现的文件/目录，或写成“需要先确认：某类入口文件”，不能把猜测写成已存在事实。",
     "actions 要能直接照着执行，避免“阅读源码、实现模块、完善功能”这种没有范围和完成标准的泛化表达。",
     "计划应围绕 miniCloneScope，明确排除 excludedFeatures；命令只有在仓库证据支持时才能给出，否则要求先从清单文件确认脚本。",
@@ -220,6 +451,13 @@ function buildPrompt(
         learningTags: analysis.learningTags.slice(0, 8)
       },
       learner: context.preference,
+      previousStage: existingPlan
+        ? {
+            summary: existingPlan.summary,
+            generatedThroughDay: getGeneratedThroughDay(existingPlan),
+            days: existingPlan.days.map((day) => ({ day: day.day, goal: day.goal, outcome: day.outcome }))
+          }
+        : null,
       cacheVersion: {
         promptVersion: context.cache.promptVersion,
         schemaVersion: context.cache.schemaVersion
@@ -264,8 +502,9 @@ function createRuleBasedContent(
     setupInstruction: evidence.setupInstruction,
     testInstruction: evidence.testInstruction
   });
-  const stageIndexes =
+  const allStageIndexes =
     duration === 3 ? [0, 6, 13] : duration === 7 ? [0, 1, 4, 5, 6, 10, 13] : stages.map((_, index) => index);
+  const stageIndexes = allStageIndexes.slice(0, duration);
   const days = stageIndexes.map((stageIndex, dayIndex) => ({
     ...stages[stageIndex],
     day: dayIndex + 1,
@@ -284,6 +523,13 @@ function createRuleBasedContent(
       `明确不实现：${excluded}`,
       "为每天预留 60-120 分钟，并在完成后保存交付物"
     ]),
+    glossary: shouldIncludeLearnerGlossary(context.preference.level)
+      ? [
+          { term: "mini 复刻", explanation: "只重做最能体现项目价值的一小段，不复制整个项目。" },
+          { term: "主路径", explanation: "用户从输入开始，经过核心处理，最后看到结果的完整过程。" },
+          { term: "交付物", explanation: "完成当天任务后必须留下的文件、截图、代码或记录。" }
+        ]
+      : [],
     days
   };
 }
@@ -546,14 +792,8 @@ function createPlanRecord(
   metadata: Pick<DetailedStudyPlan, "source" | "provider" | "modelId" | "providerAttempts" | "cache">
 ): DetailedStudyPlan {
   const generatedAt = new Date().toISOString();
-  const days = content.days.map((day, dayIndex) => ({
-    ...day,
-    day: dayIndex + 1,
-    steps: day.steps.map((step, stepIndex) => ({
-      ...step,
-      id: `day-${dayIndex + 1}-step-${stepIndex + 1}`
-    }))
-  }));
+  const days = addStableStepIds(content.days);
+  const generatedThroughDay = days.at(-1)?.day ?? 0;
 
   return {
     id: `${recommendation.repo.id}-${duration}-${Date.now()}`,
@@ -569,26 +809,43 @@ function createPlanRecord(
     generatedAt,
     summary: content.summary,
     prerequisites: uniqueStrings(content.prerequisites),
-    days
+    glossary: content.glossary,
+    days,
+    generatedThroughDay,
+    generationStatus: generatedThroughDay >= duration ? "complete" : "partial"
   };
 }
 
-function extractJsonObject(text: string) {
-  const trimmed = text.trim();
+function addStableStepIds(days: DetailedContent["days"]): DetailedStudyDay[] {
+  return days.map((day) => ({
+    ...day,
+    steps: day.steps.map((step, stepIndex) => ({
+      ...step,
+      id: `day-${day.day}-step-${stepIndex + 1}`
+    }))
+  }));
+}
 
-  try {
-    JSON.parse(trimmed);
-    return trimmed;
-  } catch {
-    // Continue with tolerant extraction.
-  }
+function getGeneratedThroughDay(plan: DetailedStudyPlan) {
+  return plan.generatedThroughDay ?? Math.max(0, ...plan.days.map((day) => day.day));
+}
 
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) return fenced[1].trim();
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
-  throw new Error("AI did not return a JSON object");
+function normalizePlanStageMetadata(plan: DetailedStudyPlan): DetailedStudyPlan {
+  const generatedThroughDay = getGeneratedThroughDay(plan);
+  return {
+    ...plan,
+    generatedThroughDay,
+    generationStatus: generatedThroughDay >= plan.duration ? "complete" : "partial"
+  };
+}
+
+function mergeGlossaries(
+  left: DetailedStudyPlan["glossary"],
+  right: DetailedStudyPlan["glossary"]
+) {
+  const merged = new Map<string, { term: string; explanation: string }>();
+  for (const item of [...(left ?? []), ...(right ?? [])]) merged.set(item.term.trim().toLowerCase(), item);
+  return [...merged.values()].slice(0, 10);
 }
 
 function uniqueStrings(values: string[]) {
@@ -611,6 +868,7 @@ function truncate(value: string, maxLength: number) {
 }
 
 function readBoundedInteger(value: string | undefined, fallback: number, min: number, max: number) {
+  if (!value?.trim()) return fallback;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, Math.min(max, Math.round(parsed)));

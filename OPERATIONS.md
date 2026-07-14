@@ -6,12 +6,12 @@
 
 | 进程 | 必需配置 | 可选配置 | 不应持有 |
 | --- | --- | --- | --- |
-| Web/API | `NODE_ENV`、`DATABASE_URL`、`SITE_URL`、`CRON_SECRET`、`ADMIN_SECRET` | `DEEPSEEK_*`（按需生成学习方案） | `GITHUB_TOKEN` |
-| Radar Worker | `NODE_ENV`、`DATABASE_URL`、`GITHUB_TOKEN` | `DEEPSEEK_*`、Worker/GitHub/AI 调优变量 | `ADMIN_SECRET`、`CRON_SECRET`、`SITE_URL` |
+| Web/API | `NODE_ENV`、`DATABASE_URL`、`SITE_URL`、`CRON_SECRET`、`ADMIN_SECRET` | `DEEPSEEK_PRO_MODEL`（仅缓存身份，不含密钥） | `GITHUB_TOKEN`、`DEEPSEEK_API_KEY` |
+| Radar / Study Plan Worker | `NODE_ENV`、`DATABASE_URL`、`GITHUB_TOKEN` | `DEEPSEEK_*`、Worker/GitHub/AI 调优变量 | `ADMIN_SECRET`、`CRON_SECRET`、`SITE_URL` |
 | Migration | `NODE_ENV`、`DATABASE_URL` | 无 | GitHub、DeepSeek、管理员和 Cron 密钥 |
 | 外部 Cron | `RADAR_CRON_URL`、`CRON_SECRET` | 无 | 数据库、GitHub、DeepSeek 密钥 |
 
-DeepSeek 只存在于 Web 的按需学习方案和 Worker 的雷达分析流程；不配置时使用规则 fallback。项目没有 OpenAI 服务配置。
+DeepSeek 真实调用只存在于 Worker：Flash 处理雷达分析，Pro 处理串行学习方案任务。Web 不持有 DeepSeek 密钥。项目没有 OpenAI 服务配置。
 
 ## 启动前预检
 
@@ -77,8 +77,10 @@ pnpm production:check -- --profile=migration
 
 ### DeepSeek 超时或失败
 
-- 系统应继续生成规则 fallback，不要把 provider 故障当作整站不可用。
-- 检查成功/fallback 数、错误分类、耗时和 provider 实际返回的 Token；不估算缺失用量。
+- 雷达分析可继续使用规则 fallback；Pro 学习方案不得把规则内容冒充 AI 结果。
+- Pro 对 3/7/14 天周期都使用一次完整生成，默认超时 300 秒；任务通过 `runId` 恢复，页面刷新不应中断 Worker。
+- 同一匿名会话只允许一个学习方案任务；排队任务可取消，模型调用开始后不提供中途截断。
+- 检查任务阶段、错误分类、耗时和 provider 实际返回的 Token；不估算缺失用量。
 - `pnpm ai:smoke` 只在受控环境手动执行一次，不加入普通 CI。
 
 ### Cron 鉴权或调度失败

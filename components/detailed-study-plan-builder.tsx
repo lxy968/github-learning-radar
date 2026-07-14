@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, Clipboard, Clock3, FileCode2, RefreshCw, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
@@ -13,6 +13,7 @@ import type {
   DetailedStudyPlanDuration,
   DetailedStudyStep,
   Difficulty,
+  JobRunStatus,
   UserPreference
 } from "@/lib/types";
 
@@ -22,12 +23,29 @@ const durationOptions: Array<{ duration: DetailedStudyPlanDuration; label: strin
   { duration: 14, label: "14 天", description: "包含测试与交付" }
 ];
 
-type GenerateResponse = {
+type PublicStudyPlanJob = {
+  runId: string;
+  status: JobRunStatus;
+  stage: string | null;
+  progress: { completed: number; total: number };
+  summary: Record<string, unknown>;
+  errorSummary: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  updatedAt: string;
+  duration: DetailedStudyPlanDuration | null;
+  repoFullName: string | null;
+};
+
+type StudyPlanResponse = {
   status: "success" | "error";
+  queued?: boolean;
   cached?: boolean;
   message?: string;
   detail?: string;
   plan?: DetailedStudyPlan;
+  plans?: DetailedStudyPlan[];
+  job?: PublicStudyPlanJob | null;
 };
 
 export function DetailedStudyPlanBuilder({
@@ -51,16 +69,74 @@ export function DetailedStudyPlanBuilder({
 }) {
   const initialByDuration = useMemo(() => indexPlans(initialPlans), [initialPlans]);
   const [plans, setPlans] = useState<Partial<Record<DetailedStudyPlanDuration, DetailedStudyPlan>>>(initialByDuration);
-  const [duration, setDuration] = useState<DetailedStudyPlanDuration>(initialPlans[0]?.duration ?? 3);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const activePlan = plans[duration];
+  const [selectedDuration, setSelectedDuration] = useState<DetailedStudyPlanDuration>(initialPlans[0]?.duration ?? 3);
+  const [activeJob, setActiveJob] = useState<PublicStudyPlanJob | null>(null);
+  const [messages, setMessages] = useState<Partial<Record<DetailedStudyPlanDuration, string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<DetailedStudyPlanDuration, string>>>({});
+  const selectedPlan = plans[selectedDuration];
 
-  async function generate(force = false) {
-    setIsGenerating(true);
-    setMessage("");
-    setError("");
+  const applyResponse = useCallback((payload: StudyPlanResponse) => {
+    if (payload.plans) setPlans(indexPlans(payload.plans));
+    if (payload.plan) setPlans((current) => ({ ...current, [payload.plan!.duration]: payload.plan }));
+    if (payload.job && payload.job.duration) {
+      const duration = payload.job.duration;
+      const belongsToCurrentRepo = payload.job.repoFullName === projectName;
+      if (payload.job.status === "queued" || payload.job.status === "running") {
+        setActiveJob(payload.job);
+        if (belongsToCurrentRepo) {
+          setMessages((current) => ({ ...current, [duration]: formatStudyPlanJobMessage(payload.job!) }));
+        }
+        writeStoredStudyPlanJob(payload.job.runId);
+      } else {
+        setActiveJob(null);
+        removeStoredStudyPlanJob();
+        if (payload.job.status === "success") {
+          setMessages((current) => ({ ...current, [duration]: "方案已经全部生成完成。" }));
+          setErrors((current) => ({ ...current, [duration]: "" }));
+        } else {
+          setErrors((current) => ({
+            ...current,
+            [duration]: payload.job?.errorSummary ?? (payload.job?.status === "cancelled" ? "任务已停止。" : "方案只完成了部分阶段。")
+          }));
+        }
+      }
+    } else if (payload.job === null) {
+      setActiveJob(null);
+      removeStoredStudyPlanJob();
+    }
+  }, [projectName]);
+
+  const syncJobState = useCallback(async () => {
+    const storedRunId = readStoredStudyPlanJob();
+    const query = storedRunId
+      ? `runId=${encodeURIComponent(storedRunId)}`
+      : `owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`;
+    try {
+      const response = await fetch(`/api/study-plans?${query}`, { cache: "no-store" });
+      const payload = (await response.json()) as StudyPlanResponse;
+      if (!response.ok || payload.status !== "success") throw new Error(payload.message ?? "无法读取方案任务状态。");
+      applyResponse(payload);
+    } catch {
+      if (activeJob?.duration) {
+        setMessages((current) => ({ ...current, [activeJob.duration!]: "任务状态暂时不可用，仍会继续尝试查询。" }));
+      }
+    }
+  }, [activeJob?.duration, applyResponse, owner, repo]);
+
+  useEffect(() => {
+    void syncJobState();
+  }, [syncJobState]);
+
+  useEffect(() => {
+    if (!activeJob || (activeJob.status !== "queued" && activeJob.status !== "running")) return;
+    const interval = window.setInterval(() => void syncJobState(), 1500);
+    return () => window.clearInterval(interval);
+  }, [activeJob, syncJobState]);
+
+  async function generate(duration: DetailedStudyPlanDuration, force = false) {
+    setSelectedDuration(duration);
+    setMessages((current) => ({ ...current, [duration]: "正在创建后台任务……" }));
+    setErrors((current) => ({ ...current, [duration]: "" }));
 
     try {
       const response = await fetch("/api/study-plans", {
@@ -68,26 +144,22 @@ export function DetailedStudyPlanBuilder({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ owner, repo, duration, force })
       });
-      const payload = (await response.json()) as GenerateResponse;
+      const payload = (await response.json()) as StudyPlanResponse;
 
-      if (!response.ok || payload.status !== "success" || !payload.plan) {
-        throw new Error(payload.detail || payload.message || "详细学习方案生成失败。 ");
+      if (!response.ok || payload.status !== "success") {
+        throw new Error(payload.detail || payload.message || "详细学习方案任务创建失败。");
       }
-
-      setPlans((current) => ({ ...current, [duration]: payload.plan }));
-      setMessage(payload.message ?? "详细学习方案已生成。 ");
+      applyResponse(payload);
+      setMessages((current) => ({ ...current, [duration]: payload.message ?? "后台任务已创建。" }));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "详细学习方案生成失败。 ");
-    } finally {
-      setIsGenerating(false);
+      setErrors((current) => ({ ...current, [duration]: caught instanceof Error ? caught.message : "任务创建失败。" }));
     }
   }
 
   return (
     <div className="grid gap-5">
       <Panel className="p-5">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
+        <div className="max-w-3xl">
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="blue">{language}</Badge>
               <Badge>{projectName}</Badge>
@@ -95,85 +167,138 @@ export function DetailedStudyPlanBuilder({
               <Badge>{levelLabel(learnerLevel)}</Badge>
               <Badge>{goalLabel(learnerGoal)}</Badge>
             </div>
-            <h2 className="mt-4 text-base font-semibold text-slate-950">选择学习周期</h2>
+            <h2 className="mt-4 text-base font-semibold text-slate-950">选择一个学习周期</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">{cloneGoal}</p>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              缓存会同时校验仓库输入、学习水平、目标、提示词/Schema 版本和 DeepSeek 模型。切换周期不会自动调用模型。
+              3 天、7 天和 14 天都会一次生成完整方案。同一时间只运行一个后台任务，刷新页面也能找回状态。
             </p>
-          </div>
-
-          <div className="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:items-end">
-            {activePlan ? (
-              <Button variant="secondary" onClick={() => generate(true)} disabled={isGenerating}>
-                <RefreshCw size={15} className={isGenerating ? "animate-spin" : ""} />
-                {isGenerating ? "正在生成" : "重新生成"}
-              </Button>
-            ) : (
-              <Button variant="primary" onClick={() => generate(false)} disabled={isGenerating}>
-                <Sparkles size={15} className={isGenerating ? "animate-pulse" : ""} />
-                {isGenerating ? "正在生成具体步骤…" : `生成 ${duration} 天详细方案`}
-              </Button>
-            )}
-          </div>
         </div>
 
-        <div className="mt-5 grid gap-2 sm:grid-cols-3">
+        <div className="mt-5 grid gap-3 lg:grid-cols-3">
           {durationOptions.map((option) => {
-            const cachedPlan = plans[option.duration];
-            const active = duration === option.duration;
-
+            const plan = plans[option.duration];
             return (
-              <button
-                type="button"
+              <StudyPlanOptionCard
                 key={option.duration}
-                onClick={() => {
-                  setDuration(option.duration);
-                  setMessage("");
-                  setError("");
-                }}
-                className={cn(
-                  "focus-ring rounded-md border px-4 py-3 text-left transition",
-                  active ? "border-teal-600 bg-teal-50" : "border-slate-200 bg-slate-50 hover:bg-white"
-                )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className={cn("text-sm font-semibold", active ? "text-teal-900" : "text-slate-800")}>
-                    {option.label}
-                  </span>
-                  {cachedPlan ? <span className="text-xs font-medium text-teal-700">已生成</span> : null}
-                </div>
-                <div className="mt-1 text-xs text-slate-500">{option.description}</div>
-              </button>
+                option={option}
+                plan={plan}
+                selected={selectedDuration === option.duration}
+                activeJob={activeJob}
+                currentRepoFullName={projectName}
+                message={messages[option.duration]}
+                error={errors[option.duration]}
+                onSelect={() => setSelectedDuration(option.duration)}
+                onGenerate={() => generate(option.duration, Boolean(plan?.generationStatus === "complete" || plan?.source === "rule"))}
+              />
             );
           })}
         </div>
-
-        {message ? <p className="mt-4 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{message}</p> : null}
-        {error ? <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
       </Panel>
 
-      {activePlan ? (
-        <DetailedPlanChecklist plan={activePlan} />
+      {selectedPlan ? (
+        <DetailedPlanChecklist plan={selectedPlan} generationActive={activeJob?.duration === selectedPlan.duration} />
       ) : (
         <Panel className="p-8 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md bg-teal-50 text-teal-700">
             <Sparkles size={20} />
           </div>
-          <h2 className="mt-4 text-base font-semibold text-slate-950">还没有 {duration} 天详细方案</h2>
+          <h2 className="mt-4 text-base font-semibold text-slate-950">还没有 {selectedDuration} 天详细方案</h2>
           <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-            点击生成后，每一步都会包含具体操作、仓库证据、验证方法、交付物和预计耗时。DeepSeek 不可用时也会生成规则方案。
+            请在上方对应卡片中启动后台生成。任务完成后，这里会一次显示全部天数和具体步骤。
           </p>
-          <Button className="mt-5" variant="primary" onClick={() => generate(false)} disabled={isGenerating}>
-            <Sparkles size={15} className={isGenerating ? "animate-pulse" : ""} />
-            {isGenerating ? "正在生成具体步骤…" : `生成 ${duration} 天详细方案`}
-          </Button>
         </Panel>
       )}
     </div>
   );
 }
 
-function DetailedPlanChecklist({ plan }: { plan: DetailedStudyPlan }) {
+function StudyPlanOptionCard({
+  option,
+  plan,
+  selected,
+  activeJob,
+  currentRepoFullName,
+  message,
+  error,
+  onSelect,
+  onGenerate
+}: {
+  option: (typeof durationOptions)[number];
+  plan?: DetailedStudyPlan;
+  selected: boolean;
+  activeJob: PublicStudyPlanJob | null;
+  currentRepoFullName: string;
+  message?: string;
+  error?: string;
+  onSelect: () => void;
+  onGenerate: () => void;
+}) {
+  const jobActive = activeJob?.status === "queued" || activeJob?.status === "running";
+  const ownsJob = jobActive && activeJob?.repoFullName === currentRepoFullName && activeJob?.duration === option.duration;
+  const generatedThroughDay = plan?.generatedThroughDay ?? (plan ? Math.max(0, ...plan.days.map((day) => day.day)) : 0);
+  const complete = Boolean(plan && generatedThroughDay >= option.duration);
+  const progressCompleted = ownsJob ? activeJob.progress.completed : generatedThroughDay;
+  const progressPercent = Math.round((Math.min(option.duration, progressCompleted) / option.duration) * 100);
+
+  return (
+    <article className={cn("rounded-lg border p-4", selected ? "border-teal-500 bg-teal-50/60" : "border-slate-200 bg-white")}>
+      <button type="button" className="focus-ring w-full rounded-md text-left" onClick={onSelect}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-base font-semibold text-slate-950">{option.label}</span>
+          <Badge tone={complete ? "green" : generatedThroughDay > 0 ? "blue" : "neutral"}>
+            {complete ? "已完成" : generatedThroughDay > 0 ? `到 Day ${generatedThroughDay}` : "未生成"}
+          </Badge>
+        </div>
+        <p className="mt-1 text-xs leading-5 text-slate-500">{option.description}</p>
+      </button>
+
+      <div className="mt-4">
+        <div className="flex items-center justify-between text-xs text-slate-500">
+          <span>{ownsJob ? "后台生成进度" : "已保存内容"}</span>
+          <span>{progressCompleted}/{option.duration} 天</span>
+        </div>
+        <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100">
+          <div className="h-full rounded-full bg-teal-600 transition-all" style={{ width: `${progressPercent}%` }} />
+        </div>
+      </div>
+
+      {ownsJob ? (
+        <div className="mt-3">
+          <p className="rounded-md bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900" aria-live="polite">
+            {message ?? formatStudyPlanJobMessage(activeJob)}
+          </p>
+        </div>
+      ) : (
+        <Button
+          className="mt-3 h-auto min-h-10 w-full whitespace-normal py-2 text-center leading-5"
+          variant={complete && plan?.source !== "rule" ? "secondary" : "primary"}
+          onClick={onGenerate}
+          disabled={jobActive}
+        >
+          {complete ? <RefreshCw size={15} /> : <Sparkles size={15} />}
+          {jobActive
+            ? "请等待当前任务"
+            : plan?.source === "rule"
+              ? "重新智能生成"
+              : complete
+                ? "重新生成"
+                : "开始后台生成"}
+        </Button>
+      )}
+
+      {message && !ownsJob ? <p className="mt-2 text-xs leading-5 text-emerald-700">{message}</p> : null}
+      {error ? <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{error}</p> : null}
+    </article>
+  );
+}
+
+function DetailedPlanChecklist({
+  plan,
+  generationActive
+}: {
+  plan: DetailedStudyPlan;
+  generationActive: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   const [activeDay, setActiveDay] = useState(plan.days[0]?.day ?? 1);
   const storageKey = getDetailedStudyPlanStorageKey(plan.id);
@@ -193,11 +318,13 @@ function DetailedPlanChecklist({ plan }: { plan: DetailedStudyPlan }) {
   const currentIndex = stepContexts.findIndex(({ step }) => !completed[step.id]);
   const current = currentIndex >= 0 ? stepContexts[currentIndex] : null;
   const next = currentIndex >= 0 ? stepContexts[currentIndex + 1] ?? null : null;
+  const generatedThroughDay = plan.generatedThroughDay ?? Math.max(0, ...plan.days.map((day) => day.day));
+  const isPartial = generatedThroughDay < plan.duration;
 
   useEffect(() => {
     if (current) setActiveDay(current.day.day);
     else if (plan.days.length > 0) setActiveDay(plan.days[plan.days.length - 1].day);
-  }, [current?.step.id, plan]);
+  }, [current?.step.id, plan.id, plan.days.length]);
 
   function toggleStep(stepId: string) {
     toggleSyncedStep(stepId);
@@ -226,20 +353,32 @@ function DetailedPlanChecklist({ plan }: { plan: DetailedStudyPlan }) {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-3xl">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={plan.source === "ai" ? "blue" : "amber"}>
-                {plan.source === "ai" ? "DeepSeek 生成" : "规则生成"}
+              <Badge tone={plan.source === "ai" ? "blue" : plan.source === "mixed" ? "green" : "amber"}>
+                {plan.source === "ai" ? "智能生成" : plan.source === "mixed" ? "智能生成 + 临时方案" : "临时规则方案"}
               </Badge>
               <Badge>{plan.duration} 天</Badge>
-              {plan.modelId ? <Badge>{plan.modelId}</Badge> : null}
+              <Badge>{isPartial ? `旧方案仅到 Day ${generatedThroughDay}` : "完整方案"}</Badge>
+              {plan.source === "rule" && plan.modelId ? <Badge>智能生成未完成</Badge> : null}
             </div>
             <h2 className="mt-3 text-base font-semibold text-slate-950">具体学习方案</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">{plan.summary}</p>
             {plan.fallbackReason ? (
               <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-                {plan.fallbackReason === "not-configured"
-                  ? "未配置 DeepSeek，本次没有发起模型调用，正在使用可执行的规则方案。"
-                  : `DeepSeek 调用失败，正在使用可执行的规则方案${plan.errorSummary ? `：${plan.errorSummary}` : "。"}`}
+                {plan.source === "mixed"
+                  ? "这是旧版混合方案，其中包含临时规则内容；建议重新生成一次完整方案。"
+                  : plan.fallbackReason === "not-configured"
+                  ? "未配置智能生成服务，本次没有发起模型调用，正在使用可执行的规则方案。"
+                  : `智能生成未完成，当前显示临时起步方案${plan.errorSummary ? `：${plan.errorSummary}` : "。"}`}
               </p>
+            ) : null}
+            {isPartial ? (
+              <div className="mt-3 rounded-md border border-blue-100 bg-blue-50 px-3 py-3">
+                <p className="text-xs leading-5 text-blue-900">
+                  {generationActive
+                    ? `正在重新生成完整的 ${plan.duration} 天方案。当前旧内容仍可查看，完成后会整体替换。`
+                    : `这是旧版未完成方案，仅保存到 Day ${generatedThroughDay}。请在上方重新生成完整方案。`}
+                </p>
+              </div>
             ) : null}
           </div>
           <Button variant="secondary" onClick={copyMarkdown}>
@@ -250,7 +389,7 @@ function DetailedPlanChecklist({ plan }: { plan: DetailedStudyPlan }) {
 
         <div className="mt-5 grid gap-2 text-xs leading-5 text-slate-600 sm:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-md bg-slate-50 px-3 py-2">
-            方案来源：{plan.source === "ai" ? `${plan.provider ?? "DeepSeek"} / ${plan.modelId ?? "默认模型"}` : "规则生成"}
+            方案来源：{plan.source === "ai" ? "智能生成" : plan.source === "mixed" ? "智能生成与临时规则内容" : "临时规则内容"}
           </div>
           <div className="rounded-md bg-slate-50 px-3 py-2">
             缓存依据：仓库更新于 {new Date(plan.basedOnPushedAt).toLocaleDateString("zh-CN")}
@@ -273,6 +412,20 @@ function DetailedPlanChecklist({ plan }: { plan: DetailedStudyPlan }) {
             ))}
           </ul>
         </div>
+
+        {plan.glossary?.length ? (
+          <div className="mt-5">
+            <h3 className="text-sm font-semibold text-slate-900">术语白话解释</h3>
+            <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+              {plan.glossary.map((item) => (
+                <div key={item.term} className="rounded-md bg-blue-50 px-3 py-2 text-sm leading-6">
+                  <dt className="font-semibold text-blue-950">{item.term}</dt>
+                  <dd className="text-blue-900">{item.explanation}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        ) : null}
       </Panel>
 
       <Panel className="sticky top-16 z-20 border-teal-100 bg-white/95 p-4 shadow-md backdrop-blur lg:top-0">
@@ -487,6 +640,47 @@ function indexPlans(plans: DetailedStudyPlan[]) {
   return Object.fromEntries(plans.map((plan) => [plan.duration, plan])) as Partial<
     Record<DetailedStudyPlanDuration, DetailedStudyPlan>
   >;
+}
+
+const studyPlanJobStorageKey = "github-learning-radar:active-study-plan-job";
+
+function writeStoredStudyPlanJob(runId: string) {
+  try {
+    window.sessionStorage.setItem(studyPlanJobStorageKey, runId);
+  } catch {
+    // Server-side job lookup still restores the task when browser storage is unavailable.
+  }
+}
+
+function readStoredStudyPlanJob() {
+  try {
+    return window.sessionStorage.getItem(studyPlanJobStorageKey)?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function removeStoredStudyPlanJob() {
+  try {
+    window.sessionStorage.removeItem(studyPlanJobStorageKey);
+  } catch {
+    // Ignore unavailable browser storage.
+  }
+}
+
+function formatStudyPlanJobMessage(job: PublicStudyPlanJob) {
+  if (job.status === "queued") return "正在等待后台任务开始。";
+  const stage = job.stage === "generating-full-plan" && job.duration
+    ? `正在生成完整的 ${job.duration} 天方案`
+    : "正在准备学习方案";
+  const startedAt = job.startedAt ?? job.createdAt;
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
+  return `${stage} · 已等待 ${formatElapsed(elapsedSeconds)}`;
+}
+
+function formatElapsed(totalSeconds: number) {
+  if (totalSeconds < 60) return `${totalSeconds} 秒`;
+  return `${Math.floor(totalSeconds / 60)} 分 ${totalSeconds % 60} 秒`;
 }
 
 function toMarkdown(plan: DetailedStudyPlan) {
