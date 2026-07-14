@@ -51,7 +51,7 @@
 - PostgreSQL 原子领取逻辑已通过本地并发语义测试，但本地没有真实 `DATABASE_URL`，尚未完成多进程 PostgreSQL 集成验证。
 - `.data` 只适合本地和单机演示；生产环境必须使用 PostgreSQL。
 - 学习进度已同步到匿名会话，但匿名 Cookie 仍是唯一恢复凭据；尚未提供登录后的跨浏览器账号同步。
-- Git for Windows 2.55.0 已安装，本地 `main` 已有有效提交并推送到 Private 仓库 `lxy968/github-learning-radar`；远端 `main` 已核对与本地 `228010d` 完全一致，GitHub Actions 结果待确认。
+- Git for Windows 2.55.0 已安装，本地 `main` 已有有效提交并推送到 Private 仓库 `lxy968/github-learning-radar`；第一阶段优化提交 `1a8f81b` 已推送且远端 `main` 与本地一致，本次 GitHub Actions 结果待确认。
 - 内置页面控制近期连接失败；必要时使用自动测试和本地 HTTP 检查，但正式发布前仍要完成真实浏览器回归。
 
 ## 三、推进原则
@@ -500,7 +500,7 @@
 
 ### 7.7 第一阶段内容质量与模型分工优化
 
-**状态：本地实现、完整方案后台回归、单次 Flash 与单次 3 天 Pro 受控 smoke 已完成（2026-07-13）；尚未提交或推送**
+**状态：本地实现、完整方案后台回归、单次 Flash 与单次 3 天 Pro 受控 smoke 已完成；第一阶段优化提交 `1a8f81b` 已推送到 Private GitHub 仓库（2026-07-14）**
 
 本地实现：
 
@@ -644,7 +644,7 @@
 - 证据矩阵明确列出 Git、浏览器、Docker/PostgreSQL、GitHub 设置、外部 smoke、预发布、备份回滚和正式 Release 的权威证据与恢复入口。
 - 恢复顺序固定为：Git/CI → Docker/PostgreSQL → 浏览器 6.4 → 预发布/回滚 → 受控 GitHub/DeepSeek smoke → tag/Release。外部条件未变化时不再重复已知失败的门禁。
 
-本地 Git 门禁、首个提交和 Private 仓库首次推送已完成；`origin/main` 与本地 `228010d` 一致。下一步由 GitHub Actions 补容器/PostgreSQL 证据并配置 Required CI。浏览器独立会话/人工键盘回归和预发布平台仍待后续条件。
+本地 Git 门禁、首个提交和 Private 仓库推送已完成；第一阶段优化提交 `1a8f81b` 已同步到 `origin/main`。本次 GitHub Actions 结果待确认；之后配置 Required CI。浏览器独立会话/人工键盘回归和预发布平台仍待后续条件。
 
 ## 九、每阶段统一验证命令
 

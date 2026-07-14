@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | TypeScript | `tsc --noEmit` 成功 | 通过 |
 | 逻辑与安全规则 | `scripts/verify.ts` 成功，覆盖评分、缓存、会话、任务、保留、生产预检和最小权限规则 | 通过 |
-| Git 跟踪审计 | Git 2.55.0.windows.2、本地 `main`、GitHub noreply 作者、首个提交 `7a188bd`；Private 远端基线为 `1687581`，当前第一阶段优化仍是本地未提交改动；严格仓库卫生与 `git diff --check` 通过 | 通过（当前改动未推送） |
+| Git 跟踪审计 | Git 2.55.0.windows.2、本地 `main`、GitHub noreply 作者、首个提交 `7a188bd`；第一阶段优化提交 `1a8f81b` 已推送到 Private 远端且本地/远端一致；严格仓库卫生与 `git diff --check` 通过 | 通过（本次 CI 待确认） |
 | 仓库静态卫生 | `.env.local`、`.data`、依赖、构建、日志和私钥被忽略；`.env.example` 密钥为空；`.gitattributes` 固定跨平台 LF/二进制图片 | 通过 |
 | standalone 构建 | Next.js 生产构建成功，产物含 server、public、static 和生产预检 | 通过 |
 | 生产 HTTP | 首页、主要页面、404、Cookie、健康、学习方案入口等回归成功 | 通过 |
@@ -29,7 +29,7 @@
 | 发布门禁 | 当前状态 | 需要的权威证据 | 恢复条件/入口 |
 | --- | --- | --- | --- |
 | 真实浏览器 6.4 | 运行时已恢复；390/768/1440、移动/桌面导航、404、规则方案、步骤刷新保持、焦点环和无控制台错误已通过。自动化 Tab/Enter 未产生原生事件，新标签页共享同一 Cookie 上下文 | 实际 Tab/Enter/Space 与屏幕阅读器、断网恢复、两套独立浏览器 Cookie 隔离证据 | 使用可注入真实键盘事件且支持第二隔离上下文的浏览器，或由维护者完成人工回归；不重复已通过的截图/布局检查 |
-| GitHub 仓库设置 | Private 仓库已推送，提交 `148d9ff` 的完整 CI 通过；Actions 运行时升级的本地门禁已通过、远程结果待确认；Dependabot 已创建升级 PR，但分支保护与安全设置尚未核对 | 本次工作流远程 CI、分支保护、Required CI、Dependabot 绿色更新、Secret Scanning、Issue/PR 模板页面 | 推送后先确认本次 CI；再按 `RELEASE_CHECKLIST.md` 配置保护规则；红色 Dependabot PR 不合并，仓库继续保持 Private |
+| GitHub 仓库设置 | Private 仓库已推送，提交 `148d9ff` 的完整 CI 通过；第一阶段优化提交 `1a8f81b` 已推送、本次远程结果待确认；Dependabot 已创建升级 PR，但分支保护与安全设置尚未核对 | 本次工作流远程 CI、分支保护、Required CI、Dependabot 绿色更新、Secret Scanning、Issue/PR 模板页面 | 先确认本次 CI；再按 `RELEASE_CHECKLIST.md` 配置保护规则；红色 Dependabot PR 不合并，仓库继续保持 Private |
 | GitHub discovery smoke | 普通 CI 不调用外部 API | 受控调用次数、限流、耗时、候选数量和脱敏日志 | 在预览 Worker 使用最小权限 Token 手动运行一次 |
 | DeepSeek smoke | Flash 启用官方 JSON Output 后单次分析成功，总 Token 3155；后续首页七项受控刷新发现 48 个候选，7 项均发起 Flash，首轮 5 成功、2 项只做定向重试后成功，最终 7/7 为 `deepseek-v4-flash`，累计输入 10,435、输出 10,518、合计 20,953 Token；3 天 `deepseek-v4-pro` 在格式容错修复后用 62.98 秒返回完整方案，输入 1507、输出 4616、合计 6123 Token；均为手动受控调用 | 7/14 天长方案输出尚未真实调用；七项 Flash 的 API/快照证据通过，当前标签页视觉效果待用户刷新确认 | 用户按需手动生成 7 天，再决定是否值得为 14 天消耗更多 Token；普通 CI 继续禁用真实 AI |
 | 预发布部署 | 平台、PostgreSQL、域名和 Secret 未确定 | HTTPS 站点、Web/Worker/Cron、`status: ok`/`storage: postgres` | 选择平台后执行 `DEPLOYMENT.md` 与 `OPERATIONS.md` |
