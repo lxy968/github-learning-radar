@@ -1,0 +1,5 @@
+[build]
+  command = "pnpm production:check -- --profile=web && pnpm build"
+
+[build.environment]
+  NODE_VERSION = "22"
