@@ -4,7 +4,8 @@ import postgres from "postgres";
 import {
   assertMigrationChecksum,
   calculateMigrationChecksum,
-  migrationAdvisoryLockName
+  migrationAdvisoryLockName,
+  runInReservedTransaction
 } from "./migration-integrity";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -64,9 +65,9 @@ async function main() {
         continue;
       }
 
-      await sql.begin(async (transaction) => {
-        await transaction.unsafe(migration);
-        await transaction`
+      await runInReservedTransaction(sql, async () => {
+        await sql.unsafe(migration);
+        await sql`
           INSERT INTO schema_migrations (version, checksum) VALUES (${file}, ${checksum})
         `;
       });

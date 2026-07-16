@@ -92,7 +92,12 @@ import {
   findVercelDeploymentConfigIssues
 } from "./repository-hygiene";
 import { assertPostgresIntegrationTarget } from "./postgres-integration-safety";
-import { assertMigrationChecksum, calculateMigrationChecksum } from "./migration-integrity";
+import {
+  assertMigrationChecksum,
+  calculateMigrationChecksum,
+  runInReservedTransaction,
+  type ReservedTransactionSql
+} from "./migration-integrity";
 import { isForbiddenHistoricalPath } from "./git-history-secret-scan";
 import { exploreNavItems, isNavItemActive, primaryNavItems } from "../components/sidebar-nav";
 import type {
@@ -110,7 +115,7 @@ async function main() {
   verifyProductionConfigPreflight();
   verifyQueueHealthPolicy();
   await verifyFairWorkerScheduler();
-  verifyMigrationIntegrity();
+  await verifyMigrationIntegrity();
   verifyDeploymentModeBoundary();
   verifyRuntimeSiteUrl();
   verifyRefreshProcessSecretBoundary();
@@ -410,7 +415,7 @@ async function verifyFairWorkerScheduler() {
   assert.equal(fallback.nextPreferredKind, "radar");
 }
 
-function verifyMigrationIntegrity() {
+async function verifyMigrationIntegrity() {
   const checksum = calculateMigrationChecksum("SELECT 1;\n");
   assert.match(checksum, /^[a-f0-9]{64}$/);
   assert.doesNotThrow(() => assertMigrationChecksum("0001_test.sql", checksum, checksum));
@@ -418,6 +423,31 @@ function verifyMigrationIntegrity() {
     () => assertMigrationChecksum("0001_test.sql", checksum, calculateMigrationChecksum("SELECT 2;\n")),
     /must not be edited/
   );
+
+  const committedCommands: string[] = [];
+  const committedSql = createTransactionRecorder(committedCommands);
+  await runInReservedTransaction(committedSql, async () => {
+    committedCommands.push("APPLY");
+  });
+  assert.deepEqual(committedCommands, ["BEGIN", "APPLY", "COMMIT"]);
+
+  const rolledBackCommands: string[] = [];
+  const rolledBackSql = createTransactionRecorder(rolledBackCommands);
+  await assert.rejects(
+    runInReservedTransaction(rolledBackSql, async () => {
+      rolledBackCommands.push("APPLY");
+      throw new Error("simulated migration failure");
+    }),
+    /simulated migration failure/
+  );
+  assert.deepEqual(rolledBackCommands, ["BEGIN", "APPLY", "ROLLBACK"]);
+}
+
+function createTransactionRecorder(commands: string[]): ReservedTransactionSql {
+  return (strings) => {
+    commands.push(strings.join("").trim());
+    return Promise.resolve([]);
+  };
 }
 
 function verifyDeploymentModeBoundary() {

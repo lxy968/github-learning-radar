@@ -597,7 +597,9 @@
 - 所有生产 profile 的 `DATABASE_URL` 必须显式使用 `sslmode=require` 或 `sslmode=verify-full`；预检只报告变量名和错误代码，不打印连接串。
 - 自动化覆盖公平轮转、空队列回退、单个超时任务、延迟重试排除、stale/数量原因、迁移校验和匹配/篡改拒绝和无 TLS 预检失败。PostgreSQL 集成脚本另验证跨会话迁移锁与迁移 0014 校验和。
 
-验证边界：本机没有 PostgreSQL/Docker，SQL advisory lock 和数据库内校验和仍需下一次 `container-integration` 证明；本轮普通测试没有启动 Worker、访问外部 API或调用 DeepSeek。
+2026-07-16 真实 CI 反馈：提交 `7597a55` 的 `verify` 通过，`container-integration` 在 `Apply migrations` 失败。`column "checksum" ... already exists, skipping` 只是 `IF NOT EXISTS` 的 PostgreSQL NOTICE；实际根因是 `pool.reserve()` 返回的固定会话没有 `sql.begin()` 方法。迁移现改为在同一 reserved 会话显式执行 `BEGIN / COMMIT / ROLLBACK`，继续保证 session advisory lock 和每文件事务处于同一连接；逻辑回归分别固定成功提交与失败回滚顺序。修复后的类型、逻辑、严格卫生、差异、生产构建和 full/showcase HTTP 回归均通过，没有调用外部 API 或 DeepSeek。临时集成库没有生产数据风险，修复后的 PostgreSQL 实跑仍待下一次 CI。
+
+验证边界：本机没有 PostgreSQL/Docker，显式事务修复已通过类型和模拟事务逻辑验证；SQL advisory lock、事务与数据库内校验和组合仍需下一次 `container-integration` 证明。本轮普通测试没有启动 Worker、访问外部 API或调用 DeepSeek。
 
 ### 7.13 首页来源诚实性、开源状态与无障碍入口
 
@@ -778,7 +780,7 @@ pnpm db:migrate:production
 
 ## 十、当前下一步
 
-Git/Private GitHub、严格仓库门禁、既有真实 CI 与 Docker/PostgreSQL 集成已经通过。线上作品集的成本防火墙、内置方案闭环、匿名会话/反馈/任务状态安全收口，以及 Worker 队列健康、公平调度、迁移锁/校验和和生产 PostgreSQL TLS 本地基线均已完成；新增 PostgreSQL 场景待下一次远程 CI 实跑。
+Git/Private GitHub、严格仓库门禁和既有 Docker/PostgreSQL 集成基线已经通过。提交 `7597a55` 的 `verify` 绿色，但新增迁移实现因 reserved 连接误用 `sql.begin()` 导致 `container-integration` 红色；本地已改为同会话显式事务并加入提交/回滚回归，待修复提交的远程 CI 复核。线上作品集的成本防火墙、内置方案闭环、匿名会话/反馈/任务状态安全收口，以及 Worker 队列健康、公平调度、迁移锁/校验和和生产 PostgreSQL TLS 本地基线均已完成。
 
 首页来源一致性、开源状态和基础无障碍本地门禁已收口，完整 Git 历史扫描与生产依赖中危门禁已本地通过；零付费 Showcase 平台已选定并完成本地配置。之后只剩 6.4 人工键盘、屏幕阅读器、断网和独立双会话证据，以及需维护者授权的 `main` 保护/Required CI、仓库公开、Vercel/Neon 创建和真实预发布步骤。
 
