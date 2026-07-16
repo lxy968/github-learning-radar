@@ -6,7 +6,7 @@
 
 当前版本：`v0.1.0` Release Candidate，尚未正式发布。发布草案见 [RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md)，变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
-计划公开地址：[lxy968/github-learning-radar](https://github.com/lxy968/github-learning-radar)。当前仓库尚未完成公开发布门禁；实际切换为 Public 后，首页才会显示该链接。线上作品集采用零 DeepSeek Key 的 showcase 模式，已选定 Vercel Hobby + Neon Free 的零付费组合，实际 Demo URL 只会在部署和线上验收成功后补入。具体步骤见 [DEPLOYMENT.md](./DEPLOYMENT.md#本项目的零付费-showcase-方案)。
+在线演示：[github-learning-radar-lxy968.vercel.app](https://github-learning-radar-lxy968.vercel.app)。计划公开地址：[lxy968/github-learning-radar](https://github.com/lxy968/github-learning-radar)。当前仓库仍为 Private；实际切换为 Public 并完成最后验收后，首页才会显示开源链接。线上作品集采用零 DeepSeek Key 的 showcase 模式，运行在 Vercel Hobby + Neon Free 的零付费组合上。具体步骤见 [DEPLOYMENT.md](./DEPLOYMENT.md#本项目的零付费-showcase-方案)。
 
 本项目是独立的开源学习工具，与 GitHub, Inc. 无隶属、授权或背书关系。GitHub 是其各自所有者的商标。
 
@@ -214,11 +214,11 @@ full 是“部署者承担生成费用”的完整实例，不是本项目维护
 
 ## 已知限制
 
-- `v0.1.0` 尚未正式发布；GitHub 计划地址已经登记但仓库仍为 Private，在线 Demo、正式截图、tag 和 Release 仍待外部发布完成后补充。
-- 已提供隔离 PostgreSQL 集成脚本与 CI 容器任务；当前工作区没有 Docker/psql，尚未取得本机真实 PostgreSQL 运行证据。
-- 真实浏览器的多尺寸截图、键盘顺序和屏幕阅读器回归仍是发布门禁；HTTP 回归不能替代它。
+- `v0.1.0` 尚未创建 tag 或 GitHub Release；在线 Demo 已上线，但 GitHub 仓库仍为 Private，正式截图和公开发布仍待完成。
+- GitHub Actions 已在隔离 PostgreSQL 16 中通过迁移与集成测试，Neon 生产库也已完成全部迁移并通过线上健康检查；当前工作区没有 Docker/psql，因此未重复本机容器验证。
+- 390/768/1440 多尺寸浏览器布局、步骤刷新保持和控制台检查已完成；真实键盘、屏幕阅读器、断网和独立双会话仍建议人工补测。
 - 公共雷达结果全站共享，匿名用户偏好主要用于重新排序和学习方案画像。
-- showcase 的服务端零入队边界，以及同一真实 DeepSeek 缓存生成的 3/7/14 天完整方案，已经完成本地验证；全新匿名会话可以记录步骤并从服务端恢复进度。公开页面不会现场调用模型，也不会下发内部模型 ID、调用轨迹或 Token 信息。真实在线作品集仍需取得托管 PostgreSQL、HTTPS 和发布前后 `job_runs`/provider 指标不变的预发布证据。
-- 本地 JSON 只支持单机开发；生产环境必须使用 PostgreSQL 并运行独立 Worker。
+- showcase 的服务端零入队边界，以及同一真实 DeepSeek 缓存生成的 3/7/14 天完整方案，已经完成本地与真实网址验证；全新匿名会话可以记录步骤并从 Neon 恢复进度。公开页面不会现场调用模型，也不会下发内部模型 ID、调用轨迹或 Token 信息。线上健康检查为 `status: ok`、`storage: postgres`，访问前后两类任务队列均保持为零。
+- 本地 JSON 只支持单机开发；full 生产环境必须使用 PostgreSQL 并运行独立 Worker，当前只读 showcase 使用 PostgreSQL 但故意不部署 Worker。
 - 没有正式账号和跨浏览器恢复能力；匿名 Cookie 丢失后无法找回原会话数据。
-- 首次公开版本使用带签发时间的 v1 匿名 Cookie；开发期旧格式 Cookie 会被重置，不迁移旧本地匿名偏好和进度。项目尚未公开上线，因此不存在需要迁移的线上匿名用户。
+- 首次公开版本使用带签发时间的 v1 匿名 Cookie；开发期旧格式 Cookie 会被重置，不迁移旧本地匿名偏好和进度。当前在线 Demo 仍处于公开仓库发布前验收阶段，不承诺保留测试会话数据。
