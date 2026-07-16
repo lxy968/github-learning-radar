@@ -18,14 +18,14 @@
 
 - [ ] 设置仓库描述、Topics、主页地址和 MIT License 识别。
 - [ ] 默认分支设为 `main`，启用分支保护并要求 CI 通过。
-- [ ] 启用 Dependabot alerts、secret scanning 和 Private Vulnerability Reporting。
+- [x] 启用 Dependabot alerts、Secret Protection、Push Protection 和 Private Vulnerability Reporting。
 - [ ] showcase 保持仓库变量 `ENABLE_DAILY_RADAR` 未设置；full 自部署才设置 `ENABLE_DAILY_RADAR=true`、`RADAR_CRON_URL` 和 `CRON_SECRET`，并确认 Actions 日志不输出密钥。
 - [ ] 检查 Issue/PR 模板和行为准则链接。
 
 ## 数据库与部署
 
 - [ ] Neon Web 使用池化 URL，Migration 使用直连 URL；两者都包含 `sslmode=require`，且没有写入仓库或日志。
-- [ ] Vercel 只配置 showcase 所需的五个 Production 变量，首次私有验收保持 `PUBLIC_REPOSITORY_PUBLISHED=false`，且未配置 GitHub/DeepSeek/OpenAI/Admin/Cron Secret。
+- [x] Vercel 只配置 showcase 所需的五个 Production 变量；公开前保持 `PUBLIC_REPOSITORY_PUBLISHED=false`，公开后改为 `true` 并重新部署；未配置 GitHub/DeepSeek/OpenAI/Admin/Cron Secret。
 - [ ] Vercel 版本化 `vercel.json` 的 Web 生产预检通过，并只构建 Production 分支。
 - [ ] 生产 PostgreSQL 已备份。
 - [ ] Web、Worker、Migration 三个 `production:check` profile 分别通过，警告已人工确认。
@@ -48,7 +48,7 @@
 
 ## 发布后
 
-- [ ] 首页、候选池、项目详情、学习方案、收藏、历史与设置页可访问。
+- [x] 首页、候选池、项目详情、学习方案、收藏、历史与设置页可访问；首页开源入口指向公开 GitHub 仓库。
 - [ ] Sitemap、robots、Open Graph URL 使用正式域名。
 - [ ] 定时刷新、Worker 领取、失败重试与运行历史正常。
 - [ ] 建立日志、告警、数据库备份和冷归档恢复演练。

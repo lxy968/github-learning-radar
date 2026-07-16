@@ -10,7 +10,7 @@
 
 GitHub 学习雷达会发现值得学习或复刻的开源项目，结合可解释的规则评分与 DeepSeek 分析，给出项目价值、Mini 复刻范围，以及可执行的 3 / 7 / 14 天学习计划。
 
-当前版本：`v0.1.0` Release Candidate。在线作品集运行在 Vercel Hobby + Neon Free 上。
+当前版本：`v0.1.0` Release Candidate。仓库已经公开，在线作品集运行在 Vercel Hobby + Neon Free 上。
 
 ## 它解决什么问题
 
