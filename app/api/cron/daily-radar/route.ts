@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
+import { isShowcaseMode, showcaseReadOnlyError } from "@/lib/deployment-mode";
 import { getPublicRadarPreference } from "@/lib/preferences";
 import { enqueueDailyRadarJob, scheduleLocalRadarJob } from "@/lib/radar-jobs";
 import { getLatestRadarRun } from "@/lib/radar-runs";
 import { getRefreshScheduleDecision } from "@/lib/refresh-schedule";
 
 export async function GET(request: Request) {
+  if (isShowcaseMode()) {
+    return NextResponse.json(showcaseReadOnlyError, {
+      status: 403,
+      headers: { "Cache-Control": "no-store" }
+    });
+  }
+
   const url = new URL(request.url);
   const force = url.searchParams.get("force") === "1";
   const secret = request.headers.get("authorization")?.replace("Bearer ", "");

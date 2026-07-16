@@ -195,6 +195,7 @@ export async function findActiveJobRunForUser(jobName: string, userId: string) {
 export async function getJobQueueHealth(jobName: string, now = new Date(), staleAfterMs = 5 * 60_000) {
   const normalizedJobName = jobName.trim();
   if (!normalizedJobName) throw new Error("jobName is required.");
+  const timestamp = now.toISOString();
   const staleBefore = new Date(now.getTime() - Math.max(30_000, staleAfterMs)).toISOString();
   const sql = getSqlClient();
 
@@ -202,12 +203,17 @@ export async function getJobQueueHealth(jobName: string, now = new Date(), stale
     const rows = await sql`
       SELECT
         COUNT(*) FILTER (WHERE status = 'queued') AS queued_count,
+        COUNT(*) FILTER (
+          WHERE status = 'queued' AND COALESCE(available_at, created_at) <= ${timestamp}
+        ) AS ready_queued_count,
         COUNT(*) FILTER (WHERE status = 'running') AS running_count,
         COUNT(*) FILTER (
           WHERE status = 'running'
             AND COALESCE(heartbeat_at, started_at, created_at) < ${staleBefore}
         ) AS stale_running_count,
-        MIN(created_at) FILTER (WHERE status = 'queued') AS oldest_queued_at,
+        MIN(COALESCE(available_at, created_at)) FILTER (
+          WHERE status = 'queued' AND COALESCE(available_at, created_at) <= ${timestamp}
+        ) AS oldest_queued_at,
         MAX(finished_at) FILTER (WHERE status IN ('success', 'partial')) AS last_successful_at
       FROM job_runs
       WHERE job_name = ${normalizedJobName}
@@ -215,6 +221,7 @@ export async function getJobQueueHealth(jobName: string, now = new Date(), stale
     const row = rows[0] ?? {};
     return {
       queued: Number(row.queued_count ?? 0),
+      readyQueued: Number(row.ready_queued_count ?? 0),
       running: Number(row.running_count ?? 0),
       staleRunning: Number(row.stale_running_count ?? 0),
       oldestQueuedAt: row.oldest_queued_at ? toIsoString(row.oldest_queued_at) : null,
@@ -225,13 +232,15 @@ export async function getJobQueueHealth(jobName: string, now = new Date(), stale
   const store = await readLocalStore();
   const jobs = store.jobs.filter((job) => job.jobName === normalizedJobName).map(normalizeJobRun);
   const queued = jobs.filter((job) => job.status === "queued");
+  const readyQueued = queued.filter((job) => job.availableAt <= timestamp);
   const running = jobs.filter((job) => job.status === "running");
   const successful = jobs.filter((job) => job.status === "success" || job.status === "partial");
   return {
     queued: queued.length,
+    readyQueued: readyQueued.length,
     running: running.length,
     staleRunning: running.filter((job) => (job.heartbeatAt ?? job.startedAt ?? job.createdAt) < staleBefore).length,
-    oldestQueuedAt: queued.map((job) => job.createdAt).sort()[0] ?? null,
+    oldestQueuedAt: readyQueued.map((job) => job.availableAt).sort()[0] ?? null,
     lastSuccessfulAt: successful.map((job) => job.finishedAt).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null
   };
 }

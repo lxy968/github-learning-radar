@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, ChevronDown, Clipboard, Clock3, FileCode2, RefreshCw, Sparkles } from "lucide-react";
+import { Check, ChevronDown, Clipboard, Clock3, FileCode2, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,7 +57,8 @@ export function DetailedStudyPlanBuilder({
   cloneGoal,
   learnerLevel,
   learnerGoal,
-  initialPlans
+  initialPlans,
+  showcaseMode = false
 }: {
   owner: string;
   repo: string;
@@ -66,6 +68,7 @@ export function DetailedStudyPlanBuilder({
   learnerLevel: Difficulty;
   learnerGoal: UserPreference["goal"];
   initialPlans: DetailedStudyPlan[];
+  showcaseMode?: boolean;
 }) {
   const initialByDuration = useMemo(() => indexPlans(initialPlans), [initialPlans]);
   const [plans, setPlans] = useState<Partial<Record<DetailedStudyPlanDuration, DetailedStudyPlan>>>(initialByDuration);
@@ -124,16 +127,22 @@ export function DetailedStudyPlanBuilder({
   }, [activeJob?.duration, applyResponse, owner, repo]);
 
   useEffect(() => {
+    if (showcaseMode) {
+      removeStoredStudyPlanJob();
+      return;
+    }
     void syncJobState();
-  }, [syncJobState]);
+  }, [showcaseMode, syncJobState]);
 
   useEffect(() => {
+    if (showcaseMode) return;
     if (!activeJob || (activeJob.status !== "queued" && activeJob.status !== "running")) return;
     const interval = window.setInterval(() => void syncJobState(), 1500);
     return () => window.clearInterval(interval);
-  }, [activeJob, syncJobState]);
+  }, [activeJob, showcaseMode, syncJobState]);
 
-  async function generate(duration: DetailedStudyPlanDuration, force = false) {
+  async function generate(duration: DetailedStudyPlanDuration) {
+    if (showcaseMode) return;
     setSelectedDuration(duration);
     setMessages((current) => ({ ...current, [duration]: "正在创建后台任务……" }));
     setErrors((current) => ({ ...current, [duration]: "" }));
@@ -142,7 +151,7 @@ export function DetailedStudyPlanBuilder({
       const response = await fetch("/api/study-plans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ owner, repo, duration, force })
+        body: JSON.stringify({ owner, repo, duration })
       });
       const payload = (await response.json()) as StudyPlanResponse;
 
@@ -166,45 +175,69 @@ export function DetailedStudyPlanBuilder({
               <Badge tone="green">仅分析当前仓库</Badge>
               <Badge>{levelLabel(learnerLevel)}</Badge>
               <Badge>{goalLabel(learnerGoal)}</Badge>
+              {showcaseMode ? <Badge tone="amber">作品集预置体验</Badge> : null}
             </div>
             <h2 className="mt-4 text-base font-semibold text-slate-950">选择一个学习周期</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">{cloneGoal}</p>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
-              3 天、7 天和 14 天都会一次生成完整方案。同一时间只运行一个后台任务，刷新页面也能找回状态。
-            </p>
+            {showcaseMode ? (
+              <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
+                这是公开演示站：推荐和学习方案会提前准备好。你可以浏览、勾选步骤并刷新查看进度；本站不会现场调用 DeepSeek，也不会产生模型费用。想生成自己的方案，请 Fork 仓库，在你自己的部署中填写 DeepSeek Key。
+              </p>
+            ) : (
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                3 天、7 天和 14 天都会一次生成完整方案。同一时间只运行一个后台任务，刷新页面也能找回状态。
+              </p>
+            )}
         </div>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-3">
-          {durationOptions.map((option) => {
-            const plan = plans[option.duration];
-            return (
-              <StudyPlanOptionCard
-                key={option.duration}
-                option={option}
-                plan={plan}
-                selected={selectedDuration === option.duration}
-                activeJob={activeJob}
-                currentRepoFullName={projectName}
-                message={messages[option.duration]}
-                error={errors[option.duration]}
-                onSelect={() => setSelectedDuration(option.duration)}
-                onGenerate={() => generate(option.duration, Boolean(plan?.generationStatus === "complete" || plan?.source === "rule"))}
-              />
-            );
-          })}
-        </div>
+        {showcaseMode && initialPlans.length === 0 ? (
+          <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-6 text-center">
+            <h3 className="text-sm font-semibold text-slate-950">该项目的公开演示方案正在准备中</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-600">你可以先查看其他推荐项目；公开站不会为了补齐内容而现场调用模型。</p>
+            <Link href="/#today-recommendations" className="focus-ring mt-4 inline-flex rounded-md text-sm font-medium text-teal-700">
+              返回今日推荐
+            </Link>
+          </div>
+        ) : (
+          <div className="mt-5 grid gap-3 lg:grid-cols-3">
+            {durationOptions.map((option) => {
+              const plan = plans[option.duration];
+              return (
+                <StudyPlanOptionCard
+                  key={option.duration}
+                  option={option}
+                  plan={plan}
+                  selected={selectedDuration === option.duration}
+                  activeJob={activeJob}
+                  currentRepoFullName={projectName}
+                  message={messages[option.duration]}
+                  error={errors[option.duration]}
+                  showcaseMode={showcaseMode}
+                  onSelect={() => setSelectedDuration(option.duration)}
+                  onGenerate={() => generate(option.duration)}
+                />
+              );
+            })}
+          </div>
+        )}
       </Panel>
 
       {selectedPlan ? (
-        <DetailedPlanChecklist plan={selectedPlan} generationActive={activeJob?.duration === selectedPlan.duration} />
-      ) : (
+        <DetailedPlanChecklist
+          plan={selectedPlan}
+          generationActive={activeJob?.duration === selectedPlan.duration}
+          showcaseMode={showcaseMode}
+        />
+      ) : showcaseMode ? null : (
         <Panel className="p-8 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md bg-teal-50 text-teal-700">
             <Sparkles size={20} />
           </div>
           <h2 className="mt-4 text-base font-semibold text-slate-950">还没有 {selectedDuration} 天详细方案</h2>
           <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-            请在上方对应卡片中启动后台生成。任务完成后，这里会一次显示全部天数和具体步骤。
+            {showcaseMode
+              ? "这个周期暂时没有预置方案。公开作品集不会现场生成；请选择已有方案，或 Fork 后在自己的 full 部署中启用生成。"
+              : "请在上方对应卡片中启动后台生成。任务完成后，这里会一次显示全部天数和具体步骤。"}
           </p>
         </Panel>
       )}
@@ -220,6 +253,7 @@ function StudyPlanOptionCard({
   currentRepoFullName,
   message,
   error,
+  showcaseMode,
   onSelect,
   onGenerate
 }: {
@@ -230,6 +264,7 @@ function StudyPlanOptionCard({
   currentRepoFullName: string;
   message?: string;
   error?: string;
+  showcaseMode: boolean;
   onSelect: () => void;
   onGenerate: () => void;
 }) {
@@ -239,6 +274,17 @@ function StudyPlanOptionCard({
   const complete = Boolean(plan && generatedThroughDay >= option.duration);
   const progressCompleted = ownsJob ? activeJob.progress.completed : generatedThroughDay;
   const progressPercent = Math.round((Math.min(option.duration, progressCompleted) / option.duration) * 100);
+  const statusLabel = showcaseMode
+    ? complete
+      ? "可体验"
+      : plan
+        ? `预置到 Day ${generatedThroughDay}`
+        : "未预置"
+    : complete
+      ? "已完成"
+      : generatedThroughDay > 0
+        ? `到 Day ${generatedThroughDay}`
+        : "未生成";
 
   return (
     <article className={cn("rounded-lg border p-4", selected ? "border-teal-500 bg-teal-50/60" : "border-slate-200 bg-white")}>
@@ -246,21 +292,21 @@ function StudyPlanOptionCard({
         <div className="flex items-center justify-between gap-3">
           <span className="text-base font-semibold text-slate-950">{option.label}</span>
           <Badge tone={complete ? "green" : generatedThroughDay > 0 ? "blue" : "neutral"}>
-            {complete ? "已完成" : generatedThroughDay > 0 ? `到 Day ${generatedThroughDay}` : "未生成"}
+            {statusLabel}
           </Badge>
         </div>
         <p className="mt-1 text-xs leading-5 text-slate-500">{option.description}</p>
       </button>
 
-      <div className="mt-4">
+      {!showcaseMode || plan ? <div className="mt-4">
         <div className="flex items-center justify-between text-xs text-slate-500">
-          <span>{ownsJob ? "后台生成进度" : "已保存内容"}</span>
+          <span>{ownsJob ? "后台生成进度" : showcaseMode ? "预置内容" : "已保存内容"}</span>
           <span>{progressCompleted}/{option.duration} 天</span>
         </div>
         <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100">
           <div className="h-full rounded-full bg-teal-600 transition-all" style={{ width: `${progressPercent}%` }} />
         </div>
-      </div>
+      </div> : null}
 
       {ownsJob ? (
         <div className="mt-3">
@@ -268,21 +314,19 @@ function StudyPlanOptionCard({
             {message ?? formatStudyPlanJobMessage(activeJob)}
           </p>
         </div>
-      ) : (
+      ) : showcaseMode ? null : (
         <Button
           className="mt-3 h-auto min-h-10 w-full whitespace-normal py-2 text-center leading-5"
-          variant={complete && plan?.source !== "rule" ? "secondary" : "primary"}
+          variant={complete || showcaseMode ? "secondary" : "primary"}
           onClick={onGenerate}
-          disabled={jobActive}
+          disabled={jobActive || complete}
         >
-          {complete ? <RefreshCw size={15} /> : <Sparkles size={15} />}
+          <Sparkles size={15} />
           {jobActive
             ? "请等待当前任务"
-            : plan?.source === "rule"
-              ? "重新智能生成"
-              : complete
-                ? "重新生成"
-                : "开始后台生成"}
+            : complete
+              ? "已有方案可用"
+              : "开始后台生成"}
         </Button>
       )}
 
@@ -294,10 +338,12 @@ function StudyPlanOptionCard({
 
 function DetailedPlanChecklist({
   plan,
-  generationActive
+  generationActive,
+  showcaseMode
 }: {
   plan: DetailedStudyPlan;
   generationActive: boolean;
+  showcaseMode: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [activeDay, setActiveDay] = useState(plan.days[0]?.day ?? 1);
@@ -353,16 +399,16 @@ function DetailedPlanChecklist({
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-3xl">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={plan.source === "ai" ? "blue" : plan.source === "mixed" ? "green" : "amber"}>
-                {plan.source === "ai" ? "智能生成" : plan.source === "mixed" ? "智能生成 + 临时方案" : "临时规则方案"}
+              <Badge tone={showcaseMode ? "blue" : plan.source === "ai" ? "blue" : plan.source === "mixed" ? "green" : "amber"}>
+                {showcaseMode ? "预置演示方案" : plan.source === "ai" ? "智能生成" : plan.source === "mixed" ? "智能生成 + 临时方案" : "临时规则方案"}
               </Badge>
               <Badge>{plan.duration} 天</Badge>
               <Badge>{isPartial ? `旧方案仅到 Day ${generatedThroughDay}` : "完整方案"}</Badge>
-              {plan.source === "rule" && plan.modelId ? <Badge>智能生成未完成</Badge> : null}
+              {!showcaseMode && plan.source === "rule" && plan.modelId ? <Badge>智能生成未完成</Badge> : null}
             </div>
             <h2 className="mt-3 text-base font-semibold text-slate-950">具体学习方案</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">{plan.summary}</p>
-            {plan.fallbackReason ? (
+            {!showcaseMode && plan.fallbackReason ? (
               <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
                 {plan.source === "mixed"
                   ? "这是旧版混合方案，其中包含临时规则内容；建议重新生成一次完整方案。"
@@ -374,7 +420,9 @@ function DetailedPlanChecklist({
             {isPartial ? (
               <div className="mt-3 rounded-md border border-blue-100 bg-blue-50 px-3 py-3">
                 <p className="text-xs leading-5 text-blue-900">
-                  {generationActive
+                  {showcaseMode
+                    ? `这是旧版未完成方案，仅保存到 Day ${generatedThroughDay}；作品集版不会现场补生成。`
+                    : generationActive
                     ? `正在重新生成完整的 ${plan.duration} 天方案。当前旧内容仍可查看，完成后会整体替换。`
                     : `这是旧版未完成方案，仅保存到 Day ${generatedThroughDay}。请在上方重新生成完整方案。`}
                 </p>

@@ -1,4 +1,5 @@
 import { createOpenAI as createOpenAICompatible } from "@ai-sdk/openai";
+import { isShowcaseMode } from "@/lib/deployment-mode";
 
 const defaultDeepSeekBaseUrl = "https://api.deepseek.com";
 const defaultDeepSeekFlashModel = "deepseek-v4-flash";
@@ -17,6 +18,8 @@ export function getConfiguredAiModel(
   task: AiModelTask,
   env: NodeJS.ProcessEnv = process.env
 ): AiModelConfig | null {
+  if (isShowcaseMode(env)) return null;
+
   if (env.DEEPSEEK_API_KEY) {
     const deepseek = createOpenAICompatible({
       apiKey: env.DEEPSEEK_API_KEY,

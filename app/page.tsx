@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, CheckCircle2, Clock3, Sparkles } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { PageHeader } from "@/components/page-header";
+import { normalizePublicRepositoryUrl, PortfolioOverview } from "@/components/portfolio-overview";
 import { RadarRefreshButton } from "@/components/radar-refresh-button";
 import { RecommendationCard } from "@/components/recommendation-card";
 import { Badge } from "@/components/ui/badge";
@@ -13,11 +14,13 @@ import { getLatestRadarRun } from "@/lib/radar-runs";
 import { getRefreshScheduleDecision } from "@/lib/refresh-schedule";
 import { formatNumber } from "@/lib/utils";
 import { listCurrentDetailedStudyPlans } from "@/lib/detailed-study-plans";
+import { getDeploymentMode } from "@/lib/deployment-mode";
 import type { RadarCategory, RefreshInterval } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  const deploymentMode = getDeploymentMode();
   const userId = await getCurrentAnonymousUserId();
   const [latestRun, preference, publicRadarPreference] = await Promise.all([
     getLatestRadarRun(),
@@ -29,35 +32,61 @@ export default async function HomePage() {
   const stats = getRadarStats(recommendations);
   const planRepoIds = new Set(detailedPlans.map((plan) => plan.repoId));
   const refreshSchedule = getRefreshScheduleDecision(latestRun, publicRadarPreference.refreshInterval);
+  const publicRepositoryUrl = normalizePublicRepositoryUrl(process.env.PUBLIC_REPOSITORY_URL);
+  const repositoryPublished = process.env.PUBLIC_REPOSITORY_PUBLISHED === "true";
+  const radarSource = latestRun?.source === "github" ? "github" : "seed";
+  const isSeedSnapshot = radarSource === "seed";
 
   return (
     <AppShell>
       <PageHeader
-        eyebrow={latestRun ? `运行记录 · ${latestRun.date}` : "种子推荐"}
-        title="今日 GitHub 学习雷达"
-        description="把候选仓库压缩成可学习、可复刻、可行动的项目列表。先看清项目做什么，再决定要不要进入详情拆学习路线。"
+        eyebrow={isSeedSnapshot ? "内置演示快照" : `运行记录 · ${latestRun?.date}`}
+        title={isSeedSnapshot ? "GitHub 学习雷达演示推荐" : "今日 GitHub 学习雷达"}
+        description={isSeedSnapshot
+          ? "当前是用于体验流程的内置种子快照，不代表当天热度。先看清项目做什么，再进入详情拆学习路线。"
+          : "把近期 GitHub 候选仓库压缩成可学习、可复刻、可行动的项目列表。先看清项目做什么，再决定要不要进入详情拆学习路线。"}
         actions={
           <>
-            <Badge tone={latestRun?.source === "github" ? "green" : "amber"}>
-              {latestRun ? `${formatRunSource(latestRun.source)} · ${formatRunStatus(latestRun.status)}` : "种子数据"}
+            <Badge tone={isSeedSnapshot ? "amber" : "green"}>
+              {isSeedSnapshot
+                ? "演示种子快照"
+                : `${formatRunSource(latestRun?.source ?? "seed")} · ${formatRunStatus(latestRun?.status ?? "failed")}`}
             </Badge>
-            {process.env.NODE_ENV !== "production" ? <RadarRefreshButton /> : null}
+            {deploymentMode === "full" && process.env.NODE_ENV !== "production" ? <RadarRefreshButton /> : null}
           </>
         }
       />
 
+      <PortfolioOverview
+        dataSource={radarSource}
+        repositoryUrl={publicRepositoryUrl}
+        repositoryPublished={repositoryPublished}
+      />
+
       <div className="grid gap-5 px-5 py-5 lg:grid-cols-[1fr_320px] lg:px-8">
-        <section className="grid gap-4">
+        <section
+          id="today-recommendations"
+          aria-label={isSeedSnapshot ? "演示推荐项目" : "今日推荐项目"}
+          tabIndex={-1}
+          className="grid scroll-mt-4 gap-4 focus:outline-none"
+        >
           {recommendations.map((item) => (
-            <RecommendationCard key={item.repo.id} item={item} hasStudyPlan={planRepoIds.has(item.repo.id)} />
+            <RecommendationCard
+              key={item.repo.id}
+              item={item}
+              hasStudyPlan={planRepoIds.has(item.repo.id)}
+              rankingLabel={isSeedSnapshot ? "演示" : "今日"}
+            />
           ))}
         </section>
 
         <aside className="grid content-start gap-4">
           <Panel className="p-5">
             <div className="flex items-center gap-2 text-teal-700">
-              <Sparkles size={16} />
-              <h2 className="text-sm font-semibold text-slate-950">今日推荐</h2>
+              <Sparkles size={16} aria-hidden="true" />
+              <h2 className="text-sm font-semibold text-slate-950">
+                {isSeedSnapshot ? "演示推荐" : "今日推荐"}
+              </h2>
             </div>
             <div className="mt-4 grid grid-cols-3 gap-2 text-center">
               <CompactStat label="项目" value={stats.projectCount} />
@@ -72,9 +101,9 @@ export default async function HomePage() {
           <Panel className="p-5">
             <div className="flex items-center gap-2">
               {latestRun?.status === "success" ? (
-                <CheckCircle2 size={16} className="text-emerald-600" />
+                <CheckCircle2 size={16} className="text-emerald-600" aria-hidden="true" />
               ) : (
-                <Clock3 size={16} className="text-amber-600" />
+                <Clock3 size={16} className="text-amber-600" aria-hidden="true" />
               )}
               <h2 className="text-sm font-semibold text-slate-950">雷达状态</h2>
             </div>
@@ -88,7 +117,9 @@ export default async function HomePage() {
               <div>
                 <dt className="text-xs text-slate-500">数据完整性</dt>
                 <dd className="mt-1 font-medium text-slate-800">
-                  {latestRun ? `${formatRunSource(latestRun.source)} · ${formatRunStatus(latestRun.status)}` : "种子推荐"}
+                  {isSeedSnapshot
+                    ? "演示种子快照"
+                    : `${formatRunSource(latestRun?.source ?? "seed")} · ${formatRunStatus(latestRun?.status ?? "failed")}`}
                 </dd>
               </div>
             </dl>
@@ -113,7 +144,7 @@ export default async function HomePage() {
             </details>
 
             <Link href="/settings" className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-teal-700">
-              调整兴趣偏好 <ArrowRight size={14} />
+              调整兴趣偏好 <ArrowRight size={14} aria-hidden="true" />
             </Link>
           </Panel>
         </aside>

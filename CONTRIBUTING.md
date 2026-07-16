@@ -13,6 +13,8 @@
 
 ```bash
 pnpm repo:hygiene
+pnpm history:secrets
+pnpm audit:prod
 pnpm typecheck
 pnpm verify
 pnpm build

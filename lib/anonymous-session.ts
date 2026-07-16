@@ -4,19 +4,29 @@ import { cookies } from "next/headers";
 export const anonymousSessionCookieName = "glr_session";
 export const anonymousSessionMaxAgeSeconds = 365 * 24 * 60 * 60;
 
-const tokenPattern = /^[A-Za-z0-9_-]{43}$/;
+const tokenPattern = /^v1\.([0-9a-z]{1,10})\.([A-Za-z0-9_-]{43})$/;
+const allowedClockSkewMs = 5 * 60_000;
 
-export function createAnonymousSessionToken() {
-  return randomBytes(32).toString("base64url");
+export function createAnonymousSessionToken(issuedAt = new Date()) {
+  const issuedAtSeconds = Math.floor(issuedAt.getTime() / 1_000).toString(36);
+  return `v1.${issuedAtSeconds}.${randomBytes(32).toString("base64url")}`;
 }
 
-export function deriveAnonymousUserId(token: string) {
-  if (!isValidAnonymousSessionToken(token)) return null;
+export function deriveAnonymousUserId(token: string, referenceDate = new Date()) {
+  if (!parseAnonymousSessionToken(token, referenceDate)) return null;
   return `anon_${createHash("sha256").update(token).digest("hex")}`;
 }
 
-export function getAnonymousUserIdFromRequest(request: Request) {
-  return deriveAnonymousUserId(readCookie(request.headers.get("cookie"), anonymousSessionCookieName) ?? "");
+export function getAnonymousSessionFromRequest(request: Request, referenceDate = new Date()) {
+  const token = readCookie(request.headers.get("cookie"), anonymousSessionCookieName) ?? "";
+  const parsed = parseAnonymousSessionToken(token, referenceDate);
+  if (!parsed) return null;
+  return {
+    token,
+    userId: `anon_${createHash("sha256").update(token).digest("hex")}`,
+    issuedAt: parsed.issuedAt,
+    expiresAt: parsed.expiresAt
+  };
 }
 
 export async function getCurrentAnonymousUserId() {
@@ -26,12 +36,19 @@ export async function getCurrentAnonymousUserId() {
   return userId;
 }
 
-export function getAnonymousSessionExpiresAt(referenceDate = new Date()) {
-  return new Date(referenceDate.getTime() + anonymousSessionMaxAgeSeconds * 1_000);
+export function isValidAnonymousSessionToken(token: string, referenceDate = new Date()) {
+  return Boolean(parseAnonymousSessionToken(token, referenceDate));
 }
 
-export function isValidAnonymousSessionToken(token: string) {
-  return tokenPattern.test(token);
+function parseAnonymousSessionToken(token: string, referenceDate: Date) {
+  const match = token.match(tokenPattern);
+  if (!match) return null;
+  const issuedAtMs = Number.parseInt(match[1], 36) * 1_000;
+  if (!Number.isFinite(issuedAtMs)) return null;
+  const nowMs = referenceDate.getTime();
+  const expiresAtMs = issuedAtMs + anonymousSessionMaxAgeSeconds * 1_000;
+  if (issuedAtMs > nowMs + allowedClockSkewMs || expiresAtMs <= nowMs) return null;
+  return { issuedAt: new Date(issuedAtMs), expiresAt: new Date(expiresAtMs) };
 }
 
 function readCookie(cookieHeader: string | null, name: string) {

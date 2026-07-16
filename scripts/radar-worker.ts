@@ -1,4 +1,6 @@
 import { loadLocalEnv } from "./load-local-env";
+import { assertBackgroundJobsEnabled } from "../lib/deployment-mode";
+import { runFairWorkerCycle, type WorkerKind } from "../lib/worker-scheduler";
 
 loadLocalEnv();
 
@@ -7,6 +9,7 @@ const pollIntervalMs = readBoundedInteger(process.env.RADAR_WORKER_POLL_MS, 5_00
 const staleAfterMs = readBoundedInteger(process.env.RADAR_JOB_STALE_AFTER_MS, 5 * 60_000, 30_000, 60 * 60_000);
 let stopping = false;
 let wakeWorker: (() => void) | null = null;
+let preferredWorkerKind: WorkerKind = "study-plan";
 
 process.once("SIGINT", stop);
 process.once("SIGTERM", stop);
@@ -17,6 +20,7 @@ main().catch((error) => {
 });
 
 async function main() {
+  assertBackgroundJobsEnabled("radar worker startup");
   const { runRadarWorkerOnce } = await import("../lib/radar-worker");
   const { runStudyPlanWorkerOnce } = await import("../lib/study-plan-worker");
   if (!process.env.DATABASE_URL && process.env.NODE_ENV === "production") {
@@ -24,10 +28,19 @@ async function main() {
   }
 
   do {
-    const studyPlanResult = await runStudyPlanWorkerOnce({
-      staleAfterMs: readBoundedInteger(process.env.STUDY_PLAN_JOB_STALE_AFTER_MS, 10 * 60_000, 5 * 60_000, 60 * 60_000)
+    const cycle = await runFairWorkerCycle(preferredWorkerKind, {
+      studyPlan: () => runStudyPlanWorkerOnce({
+        staleAfterMs: readBoundedInteger(
+          process.env.STUDY_PLAN_JOB_STALE_AFTER_MS,
+          10 * 60_000,
+          5 * 60_000,
+          60 * 60_000
+        )
+      }),
+      radar: () => runRadarWorkerOnce({ staleAfterMs })
     });
-    const result = studyPlanResult.status === "processed" ? studyPlanResult : await runRadarWorkerOnce({ staleAfterMs });
+    preferredWorkerKind = cycle.nextPreferredKind;
+    const result = cycle.result;
     if (result.recovery.requeuedRunIds.length || result.recovery.failedRunIds.length) {
       console.log(
         `recovered=${result.recovery.requeuedRunIds.length} failed_stale=${result.recovery.failedRunIds.length}`

@@ -1,6 +1,6 @@
 # GitHub 学习雷达推进路线
 
-> 更新时间：2026-07-13
+> 更新时间：2026-07-16
 > 用途：作为后续模型和开发者的单一推进依据。开始新阶段前先阅读本文，不要仅凭文件存在判断功能完成。
 
 ## 一、产品目标
@@ -525,6 +525,105 @@
 
 2026-07-14 候选学习入口与界面去模型化：任何已保存到候选池的仓库都能进入 3/7/14 天具体学习方案页，不再要求先进入当日最高分推荐。未入选候选先依据已保存的 README、技术栈和工程信号构造内置分析上下文；打开页面不调用模型，只有用户点击生成才创建严格串行的后台任务。学习方案 API、任务 Worker 和缓存读取统一使用候选解析入口，普通验证覆盖只存在于候选池的仓库，生产 HTTP 回归进一步确认候选详情、方案页和任务 `202` 入队全链路；测试环境没有运行 Worker，因此没有真实 AI 调用或 Token。面向用户的 `Flash`、`Pro`、供应商和模型 ID 已改为“智能分析 / 智能生成 / 内置规则”等功能说明，内部仍按既有安全约束只配置 DeepSeek。原“项目库”没有独立存储或筛选含义，只是重复渲染最新推荐，现已从导航与 sitemap 合并到候选项目，`/library` 保留兼容跳转。类型检查、逻辑验证、严格仓库卫生、生产构建与完整 HTTP 回归全部通过。
 
+### 7.8 线上作品集说明与开源自部署叙事
+
+**状态：内容与回归覆盖已完成；零付费 Showcase 运行边界和预置方案仍是发布阻断（2026-07-14）**
+
+完成内容：
+
+- `components/portfolio-overview.tsx`：首页新增面向所有访客的“两分钟看懂”说明，先解释项目解决的问题和三步体验路径，再按需展开完整数据流、后台任务/PostgreSQL/缓存/匿名会话取舍、公开 Token 防护、线上作品集版与完整自部署版差异、Fork/配置 Key/部署步骤及已完成证据。
+- 说明区保持首页信息减法：问题和两分钟路径默认可见，工程与发布细节放在原生 `<details>` 中，不把推荐卡首屏重新堆满。
+- `PUBLIC_REPOSITORY_URL` 是可选运行时展示配置，只接受无凭据、无查询参数的 `https://github.com/<owner>/<repo>`；仓库仍为 Private 时保持为空并显示“开源准备中”，不能用占位地址冒充公开链接。
+- `scripts/verify.ts` 覆盖八类内容、公开链接启用/禁用和 URL 安全收敛；`scripts/http-regression.ts` 覆盖生产页面真实输出。本轮普通验证不调用 DeepSeek。
+
+验证证据：显式清空 GitHub/DeepSeek/OpenAI 密钥后，`pnpm typecheck`、`pnpm verify`、`pnpm repo:hygiene -- --strict`、`git diff --check`、Next.js standalone `pnpm build` 和使用系统临时数据目录的生产 HTTP 回归全部通过；没有调用外部 API、没有消耗 Token，也没有改写项目 `.data`。
+
+边界：本节验收时只完成作品集内容与信息架构；当时匿名学习方案 POST 仍支持 `force=true`。后续 7.9 已补服务端成本边界，默认匿名画像命中完整预置方案仍待下一阶段完成。
+
+下一步：先实现上述 Showcase 成本防火墙和预置体验，再修复匿名会话保留、反馈输入边界、学习任务状态所有权、Worker 健康与公平调度；之后补 6.4 人工门禁和公开仓库/云端发布证据。
+
+### 7.9 Showcase / Full 成本防火墙
+
+**状态：服务端零入队边界与本地自动化已完成；预置完整方案和预发布数据库证据仍待完成（2026-07-14）**
+
+完成内容：
+
+- 新增 `APP_DEPLOYMENT_MODE=showcase|full`。本地未配置保持 full 开发体验；生产未配置或配置错误时运行时 fail-closed 为 showcase，生产预检同时报错阻止正式启动。
+- showcase 在读取请求体、匿名会话、管理员密钥或数据库前，统一拒绝学习方案 POST/DELETE、雷达刷新 POST 和 Cron GET，响应为 `403 showcase_read_only`；任务入队、执行、Worker polling 和本地自动执行函数另有第二层断言，避免新增入口绕过路由。
+- full 保持后台任务能力，但普通访客不再能用 `force=true` 绕过缓存；强制重生成只允许通过 `ADMIN_SECRET` Bearer 鉴权调用。前端不再发送 force，完整缓存方案只显示为可直接使用。
+- 学习方案页能识别 showcase，停止任务轮询，隐藏可执行语义并用大白话说明“只展示预置内容、不会调用 DeepSeek、Fork 后用自己的 Worker/Key 启用”；开发首页的雷达刷新按钮也只在 full 显示。
+- `production-check` 按模式收敛最小权限：showcase Web 不需要 Admin/Cron Secret，出现 GitHub/DeepSeek Key 直接失败且不允许 Worker；full Web/Worker 延续分离密钥。README、部署与运维手册、环境模板和 CI 已同步。
+- DeepSeek provider 在 showcase 即使误注入 Key 也返回未配置，`ai:smoke` 直接拒绝运行；内部取消函数同样增加模式断言。强制生成的管理员校验不再因 development 环境自动放行，`.env.example` 默认选择安全的 showcase。
+- `scripts/verify.ts` 覆盖模式解析、生产 fail-closed、showcase 四个路由拒绝、内部入队拒绝、任务文件零创建、匿名 force 拒绝和两类生产预检；HTTP 回归可分别用 `REGRESSION_EXPECTED_DEPLOYMENT_MODE=full|showcase` 验证真实 standalone 响应。普通测试不注入任何真实 Key，不调用外部 API 或 DeepSeek。
+- CI 增加独立 showcase standalone HTTP 回归；full Web 不再检查或接收业务 Key，full Worker 预检要求 GitHub Token 和 DeepSeek Key。运维手册明确 showcase 不能回滚到不认识模式开关的旧镜像，full 必须按“停 Cron → 停 Worker → 回滚 → 恢复 Worker → 恢复 Cron”执行。
+- 真人体验复审后收敛 showcase 语义：学习周期不再渲染禁用的生成按钮或“未生成/0 天”失败态；有内容标为“可体验/预置内容”，无内容只显示一次“公开演示方案准备中”。项目详情、候选详情和收藏路线统一改为“查看预置方案”，页头只在实际命中方案时承诺可直接体验，技术性的 full/Worker 说明移出首屏文案。
+
+本节验收边界：7.9 只证明“公开请求不能创建或执行付费任务”，当时尚未提供全新匿名会话必定可见的完整方案；后续 7.10 已补齐本地内置方案和进度恢复闭环，真实 PostgreSQL 指标对比仍属于预发布证据。
+
+验证证据：显式清空 GitHub、DeepSeek 和 OpenAI 密钥后，`pnpm typecheck`、`pnpm verify`、`pnpm repo:hygiene -- --strict`、`git diff --check` 和 standalone `pnpm build` 全部通过。随后分别以 `APP_DEPLOYMENT_MODE=full` 和 `showcase` 启动两个使用系统临时数据目录的生产 standalone 实例，两套 `pnpm regression:http` 均通过；full 证明普通任务返回 `202`、匿名 force 返回 `401`，showcase 证明学习方案、刷新和 Cron 写入口返回 `403` 且页面没有生成承诺。没有启动 Worker、没有访问外部 API、没有真实 DeepSeek 调用或 Token 消耗，也没有改写项目 `.data`。CI 已配置同样的双模式 HTTP 回归，但未获提交/推送授权，因此远程结果仍待后续确认。
+
+### 7.10 Showcase 内置完整方案与进度恢复
+
+**状态：本地闭环已完成；真实预发布 PostgreSQL 指标证据仍待部署阶段补充（2026-07-14）**
+
+- `lib/showcase-study-plans.ts` 为 showcase 中的当前推荐内置一份完整 3 天方案。内容只依赖已保存的公开仓库快照、当前学习水平/目标和版本化规则，不调用 provider；方案固定 `providerAttempts=[]`，不会写入 `detailed_study_plans`。
+- 方案 ID 包含版本、仓库 ID 和缓存身份摘要；同一快照/画像刷新时稳定，仓库或画像改变时自动换 ID，避免学习进度串到不同内容。
+- 首页、项目/候选方案页、收藏路线和 `GET /api/study-plans?owner=&repo=` 都能读取同一内置方案；showcase 页面直接出现“可体验”和完整步骤，不再落入“准备中”空状态。
+- 逻辑验证覆盖完整天数、稳定 ID、零 provider attempt 和 full 模式不注入内置方案；生产 HTTP 回归增加“读取方案 → 完成第一步 → 再次读取相同方案 ID → GET 恢复进度 → 前后队列健康摘要不变”闭环。
+
+边界：本地 JSON/standalone 证据不能替代真实托管 PostgreSQL 的行数对比。预发布时仍需在请求前后记录 `job_runs` 总行数、活跃任务数和 radar/provider Token 指标，确认均无变化。
+
+### 7.11 匿名会话、反馈与任务状态安全收口
+
+**状态：本地实现与完整门禁已完成；PostgreSQL 并发清理测试已加入 CI 集成脚本，待下一次远程实跑（2026-07-15）**
+
+- 匿名 Cookie 改为包含签发时间的版本化随机令牌，固定一年失效；Proxy 首次签发时登记服务端会话，后续请求只能续活仍存在且未过期的记录。已清除、已过期或旧格式令牌不能重新建立原身份。
+- 本项目尚未公开部署、没有需要迁移的线上匿名用户，因此首发直接淘汰旧版 43 字符开发 Cookie；已有本地开发 Cookie 会获得新身份，旧本地匿名偏好/进度不承诺迁移。
+- 过期清理每个实例至多每 5 分钟触发一次，每轮最多处理 4 个 1000 条批次；PostgreSQL 候选只接受 `anon_<64 hex>`，使用 `FOR UPDATE SKIP LOCKED` 并在最终删除时再次检查过期时间，避免与并发续期互删。级联继续覆盖偏好、交互、反馈和学习进度；本地 JSON 使用同一会话锁串行删除关联数据。
+- Feedback POST 只接受 `repoId/eventType/value` 三个字段、精确 `application/json`、最多 2048 字节和合法 UTF-8；任意 `payload`、`userId`、额外字段、异常流和超限请求被拒绝，公开事件只返回显式允许字段。
+- 通用任务状态 API 只公开全站雷达任务；其余任务默认拒绝，必须由当前匿名会话与 `payload.userId` 精确匹配。`runId` 使用字符白名单，不再二次 URL 解码，跨会话与畸形 ID 分别稳定返回 404/400。
+- 逻辑回归覆盖固定 TTL、删除令牌重放、25 个过期会话跨批清理、活跃会话保留、反馈 2048/2049 字节边界、错误媒体类型/UTF-8/流、三类任务会话和畸形 ID。PostgreSQL 集成脚本增加续期事务持锁、清理跳锁、四类子表级联和历史非匿名记录保护。
+
+验证证据：清空 GitHub/DeepSeek/OpenAI Key 后，`pnpm typecheck`、`pnpm verify`、`pnpm repo:hygiene -- --strict`、`git diff --check`、standalone `pnpm build` 与 full/showcase 两套临时目录 HTTP 回归全部通过。没有启动 Worker、访问外部 API 或调用 DeepSeek。当前机器没有 PostgreSQL，新增并发 SQL 场景必须由下一次 GitHub Actions `container-integration` 或预发布数据库结果确认。
+
+### 7.12 Worker 公平调度、队列健康与迁移完整性
+
+**状态：本地实现和逻辑验证已完成；PostgreSQL 锁/校验和集成场景待下一次远程 CI 实跑（2026-07-15）**
+
+- 常驻 Worker 在雷达与学习方案两类队列都持续有任务时按轮次交替优先级；首选队列为空会立即尝试另一队列，避免学习方案持续入队时雷达永久得不到执行。
+- 队列健康摘要区分全部 queued 与当前可领取的 `readyQueued`，延迟重试不会被误报为积压；Radar 和 Study Plan 都按 stale running、可领取数量以及最老可领取任务等待时间生成明确 `degradedReasons`。
+- 新增 `RADAR_QUEUE_DEGRADED_AFTER_MS`（默认 10 分钟）和 `STUDY_PLAN_QUEUE_DEGRADED_AFTER_MS`（默认 30 分钟）；生产预检校验可配置范围。
+- 数据库迁移在同一 PostgreSQL 会话持有 advisory lock，竞争迁移必须串行；`schema_migrations` 记录每个 SQL 文件的 SHA-256，首次升级为历史记录补录，之后仓库文件与已应用校验和不一致会中止。
+- 所有生产 profile 的 `DATABASE_URL` 必须显式使用 `sslmode=require` 或 `sslmode=verify-full`；预检只报告变量名和错误代码，不打印连接串。
+- 自动化覆盖公平轮转、空队列回退、单个超时任务、延迟重试排除、stale/数量原因、迁移校验和匹配/篡改拒绝和无 TLS 预检失败。PostgreSQL 集成脚本另验证跨会话迁移锁与迁移 0014 校验和。
+
+验证边界：本机没有 PostgreSQL/Docker，SQL advisory lock 和数据库内校验和仍需下一次 `container-integration` 证明；本轮普通测试没有启动 Worker、访问外部 API或调用 DeepSeek。
+
+### 7.13 首页来源诚实性、开源状态与无障碍入口
+
+**状态：实现与自动化验证进行中；真实键盘注入、屏幕阅读器和独立双会话仍受当前浏览器能力限制（2026-07-15）**
+
+- 没有 GitHub 运行记录或运行来源为 seed 时，首页统一显示“演示推荐 / 内置演示快照 / 不代表当天热度”，卡片排名改为“演示 #”；只有真实 GitHub 来源才显示“今日”和“近期活跃”。历史空状态与来源徽章使用同一中文语义。
+- 候选池在没有已抓取数据时统一显示“演示快照 / 演示候选 / 不代表实时 GitHub discovery”，不再一边标 Seed、一边用标题和描述暗示当前数据来自实时抓取。
+- 开源入口不再只凭 URL 语法出现。`PUBLIC_REPOSITORY_URL` 可提前登记计划地址，但必须同时显式设置 `PUBLIC_REPOSITORY_PUBLISHED=true` 才显示链接；生产预检拒绝“已公开但缺少合法 URL”和无效布尔值。
+- 应用增加“跳到主要内容”链接，主内容与推荐列表都可作为片段焦点目标；装饰品牌字和图标从无障碍树隐藏，Star/Fork 数量使用明确可访问名称。
+- 真实浏览器复核发现项目详情与候选详情在应用壳主区域内又嵌套一个 `<main>`；两个内层地标已改为普通内容容器，源码门禁固定断言只有应用壳能声明主地标。Next.js raw HTTP 含流式数据片段，不能用标签字符串计数冒充运行时 DOM 证据。
+- 逻辑与 HTTP 回归覆盖 seed/GitHub 两类来源文案、URL 已登记但未发布、已发布链接、开源预检和 skip-link/main 目标。
+
+浏览器证据：showcase 生产产物已真实点击走通“首页项目名 → 项目详情 → 预置学习方案 → 完成一步 → 刷新”，刷新后仍为 `1/6`、当前任务推进到第二步，控制台无 warning/error。内置浏览器的可访问树已证明此前“学”字标会单独暴露；当前浏览器对 Tab/Enter/Space 注入仍不产生原生焦点/激活，且只提供一个共享 Cookie 的浏览器实例。不能把点击或结构检查冒充真实键盘、NVDA 或双会话证据；剩余项保留人工发布门禁。
+
+### 7.14 完整 Git 历史敏感信息门禁
+
+**状态：扫描器和发布/CI 门禁已实现，完整历史本地实跑通过（2026-07-15）**
+
+- `pnpm history:secrets` 枚举所有 refs 的历史 blob，拒绝历史 `.env`、数据库、私钥、本地数据和构建目录，并复用当前仓库的 GitHub Token、API Key、数据库凭据、私钥和 Bearer 模式。
+- 扫描结果只打印风险类型、历史路径和 blob 短哈希，不回显匹配内容；超过 1 MB 或非文本 blob 仍执行敏感路径检查，但不加载内容。
+- `pnpm release:check` 已包含历史扫描；CI checkout 使用 `fetch-depth: 0` 后单独执行同一命令，避免浅克隆被误称为完整历史证据。
+- 逻辑测试覆盖 `.env.local`、SQLite、`.next` 拒绝和 `.env.example` 允许；严格仓库卫生要求扫描脚本、package 命令和 CI 步骤持续存在。
+- 本地最终扫描 282 个历史文本 blob 路径并通过。生产依赖联网审计随后发现 Next.js 固定的 `postcss 8.4.31` 存在一条中危 XSS 公告（`GHSA-qx2v-qp2m-jg93`）；通过定向 `next>postcss=8.5.16` override 升级到已修复版本并更新锁文件，`pnpm audit:prod` 已加入 release check 与 CI，联网复查结果为 `No known vulnerabilities found`。
+
+边界：本节只证明本地 Git 对象和未来完整克隆 CI；GitHub Secret Scanning/Private Vulnerability Reporting、仓库公开状态和分支保护仍属于必须由维护者授权的远端设置。
+
 ## 八、正式开源与发布阶段（P1）
 
 当前已经有 CI、License、贡献指南和安全文档，但真正发布前还需要：
@@ -576,7 +675,7 @@
 - 仓库卫生门禁强制 package 版本、对应 Release Notes、Changelog Unreleased、README 架构/已知限制保持一致。
 - `pnpm repo:hygiene`、`pnpm typecheck`、`pnpm verify`、`pnpm build` 和生产构建上的 `pnpm regression:http` 通过；仅保留 Git 不可用警告。
 
-未完成：没有创建 Git commit、tag 或 GitHub Release，也没有填写真实仓库 URL、在线 Demo、维护者联系方式和产品截图。这些内容必须在对应资源真实存在后补充，不能使用占位内容冒充。
+未完成：GitHub 计划地址已经登记但仓库仍为 Private；没有创建本版本的 Git commit、tag 或 GitHub Release，也没有在线 Demo、维护者联系方式和产品截图。这些内容必须在对应资源真实存在后补充，不能使用占位内容冒充。
 
 下一步：执行 8.3，补可移植的生产部署基线和 PostgreSQL 集成验证入口；同时继续保留 6.4 真实浏览器、8.1 严格 Git 检查为发布门禁。
 
@@ -630,9 +729,9 @@
 - 不带生产域名完成 standalone 构建；启动时注入 `SITE_URL=https://runtime.example.invalid` 后，首页 canonical、sitemap、robots 和完整 HTTP 路由回归通过，响应中没有构建期 localhost。
 - Next.js 构建结果将 `/robots.txt`、`/sitemap.xml` 标记为动态路由，证明域名不是静态产物。
 
-尚未完成：没有真实平台、DNS、TLS、托管 PostgreSQL、镜像仓库或生产 Secret，因此不能执行真实迁移、备份恢复、Worker/Cron 联调、镜像回滚和外部健康观察。平台未确定前不能编造平台专属配置或成功证据。
+尚未完成：虽然后续 8.6 已选定 Vercel Hobby + Neon Free，但尚未创建真实平台资源、TLS 站点、托管 PostgreSQL 或生产 Secret，因此不能执行真实迁移、备份恢复、回滚和外部健康观察。Showcase 不部署 Worker/Cron；完整自部署的 Worker/Cron 云端联调仍不属于本次公开作品集上线范围。
 
-下一步：由维护者确定 Web/Worker 托管平台、PostgreSQL 提供方和正式域名后，按 [OPERATIONS.md](./OPERATIONS.md) 创建最小权限环境，先在预览环境完成 8.3 容器/PostgreSQL 门禁，再执行 8.4 的备份、迁移、健康、任务、Cron 和回滚演练。真实 DeepSeek smoke 仍只手动调用一次。
+下一步：待维护者授权后，按 8.6 与 [OPERATIONS.md](./OPERATIONS.md) 在 Vercel Hobby + Neon Free 创建只含 showcase Web 的最小权限环境，完成迁移、健康、零 Token 指标和回滚演练。真实 DeepSeek smoke 不属于 showcase 部署，普通门禁继续禁止调用。
 
 ### 8.5 发布剩余证据审计
 
@@ -645,6 +744,19 @@
 - 恢复顺序固定为：Git/CI → Docker/PostgreSQL → 浏览器 6.4 → 预发布/回滚 → 受控 GitHub/DeepSeek smoke → tag/Release。外部条件未变化时不再重复已知失败的门禁。
 
 本地 Git 门禁、首个提交和 Private 仓库推送已完成；第一阶段优化提交 `1a8f81b` 已同步到 `origin/main`。本次 GitHub Actions 结果待确认；之后配置 Required CI。浏览器独立会话/人工键盘回归和预发布平台仍待后续条件。
+
+### 8.6 零付费 Showcase 平台收口
+
+**状态：本地部署配置已完成；真实云资源与上线待维护者授权（2026-07-16）**
+
+- 作品集 Web 选择 Vercel Hobby，数据库选择 Neon Free，先使用平台自动分配的 `*.vercel.app` 地址。2026-07-16 官方页面显示两者均为 `$0`；Vercel Hobby 面向个人非商业项目、免费账号不能购买额外用量，Neon Free 无需信用卡并提供每项目 100 CU-hours/月与 0.5 GB 存储。
+- 线上只部署 `APP_DEPLOYMENT_MODE=showcase` 的 Next.js Web，不部署 Worker、Cron 或任何 GitHub/DeepSeek Key；达到免费额度时接受限流/暂停，不升级付费或开启按量计费。
+- 新增 `vercel.json`，固定 Next.js 并在云端构建前执行 Web 生产预检；仓库卫生与逻辑验证拒绝移除预检、把 env/cron 写入配置或改变框架。
+- Neon 池化 URL 只给 Serverless Web；使用 session advisory lock 的迁移必须使用直连 URL。两类连接都强制 TLS，Secret 只进入对应平台或当前迁移进程。
+- `DEPLOYMENT.md` 已记录公开仓库、迁移、五个 showcase 环境变量、健康、数据库计数和零 Token 线上验收顺序。README 只登记计划 GitHub 地址，不冒充已经公开或已有在线 Demo。
+- 使用无凭据的合成 PostgreSQL TLS URL 和公开站点 URL 实跑 Vercel 等价 Web 生产预检、Next.js 构建以及 full/showcase 两套临时目录 HTTP 回归，均通过；没有启动 Worker、访问 GitHub/DeepSeek 或消耗模型 Token。
+
+边界：本轮没有创建 Vercel/Neon 账号资源，没有修改 GitHub 设置、提交、推送或部署。免费额度和平台条款会变化，正式部署当天必须重新核对官方页面；任何绑卡、升级或按量计费要求都需要重新获得维护者授权。
 
 ## 九、每阶段统一验证命令
 
@@ -666,6 +778,8 @@ pnpm db:migrate:production
 
 ## 十、当前下一步
 
-Git/Private GitHub、严格仓库门禁、真实 CI 与 Docker/PostgreSQL 集成已经通过。当前恢复顺序中的第一项是完成 6.4 剩余人工键盘、屏幕阅读器、断网和独立双会话证据；同时配置 `main` 分支保护与 Required CI。完成后再选择预发布平台、数据库和域名。
+Git/Private GitHub、严格仓库门禁、既有真实 CI 与 Docker/PostgreSQL 集成已经通过。线上作品集的成本防火墙、内置方案闭环、匿名会话/反馈/任务状态安全收口，以及 Worker 队列健康、公平调度、迁移锁/校验和和生产 PostgreSQL TLS 本地基线均已完成；新增 PostgreSQL 场景待下一次远程 CI 实跑。
 
-4.1–4.4、5.2–5.3、6.1–6.3、7.1–7.6、8.2、8.3 和 8.5 已完成；8.1 的本地跟踪/Private 推送/CI 已完成但 GitHub 保护设置待配置；8.4 的平台无关基线已完成但缺真实云资源演练；6.4 已取得真实多视口/交互的部分证据但仍缺实际键盘、屏幕阅读器、断网和独立双会话。完整阻塞矩阵见 `RELEASE_READINESS.md`。
+首页来源一致性、开源状态和基础无障碍本地门禁已收口，完整 Git 历史扫描与生产依赖中危门禁已本地通过；零付费 Showcase 平台已选定并完成本地配置。之后只剩 6.4 人工键盘、屏幕阅读器、断网和独立双会话证据，以及需维护者授权的 `main` 保护/Required CI、仓库公开、Vercel/Neon 创建和真实预发布步骤。
+
+4.1–4.4、5.2–5.3、6.1–6.3、7.1–7.6、8.2、8.3、8.5 和 8.6 的本地部分已完成；8.1 的本地跟踪/Private 推送/CI 已完成但 GitHub 保护设置待配置；8.4/8.6 仍缺真实云资源演练；6.4 已取得真实多视口/交互的部分证据但仍缺实际键盘、屏幕阅读器、断网和独立双会话。完整阻塞矩阵见 `RELEASE_READINESS.md`。

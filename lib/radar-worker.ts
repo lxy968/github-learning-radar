@@ -1,4 +1,5 @@
 import { claimNextJobRun, recoverStaleJobRuns } from "@/lib/job-runs";
+import { assertBackgroundJobsEnabled } from "@/lib/deployment-mode";
 import {
   dailyRadarJobName,
   executeClaimedDailyRadarJob
@@ -12,6 +13,7 @@ export async function runRadarWorkerOnce(
     staleAfterMs?: number;
   } = {}
 ) {
+  assertBackgroundJobsEnabled("daily radar worker polling");
   const now = options.now ?? new Date();
   const staleAfterMs = Math.max(30_000, Math.round(options.staleAfterMs ?? 5 * 60_000));
   const recovery = await recoverStaleJobRuns({

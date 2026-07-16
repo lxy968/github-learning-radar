@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const profiles = new Set(["web", "worker", "migration"]);
+const deploymentModes = new Set(["showcase", "full"]);
 const numericRules = [
   ["GITHUB_SEARCH_PER_PAGE", 5, 100],
   ["GITHUB_DISCOVERY_WINDOW_DAYS", 7, 730],
@@ -14,8 +15,10 @@ const numericRules = [
   ["RADAR_AI_TIMEOUT_MS", 5_000, 120_000],
   ["RADAR_WORKER_POLL_MS", 1_000, 60_000],
   ["RADAR_JOB_STALE_AFTER_MS", 30_000, 3_600_000],
+  ["RADAR_QUEUE_DEGRADED_AFTER_MS", 60_000, 86_400_000],
   ["STUDY_PLAN_AI_TIMEOUT_MS", 30_000, 600_000],
   ["STUDY_PLAN_JOB_STALE_AFTER_MS", 300_000, 3_600_000],
+  ["STUDY_PLAN_QUEUE_DEGRADED_AFTER_MS", 300_000, 86_400_000],
   ["RETENTION_RADAR_RUN_DAYS", 7, 3_650],
   ["RETENTION_MIN_RADAR_RUNS", 1, 500],
   ["RETENTION_JOB_RUN_DAYS", 1, 3_650],
@@ -39,25 +42,40 @@ export function validateProductionConfig(env, profile) {
     issue("node_env", "NODE_ENV", "NODE_ENV must be production for a production preflight.");
   }
 
+  const deploymentMode = validateDeploymentMode(env.APP_DEPLOYMENT_MODE, issue);
+
   validateDatabaseUrl(env.DATABASE_URL, issue, warn);
 
   if (profile === "web") {
     validateSiteUrl(env, issue);
-    validateSecret(env.CRON_SECRET, "CRON_SECRET", issue);
-    validateSecret(env.ADMIN_SECRET, "ADMIN_SECRET", issue);
-    if (env.CRON_SECRET && env.ADMIN_SECRET && env.CRON_SECRET === env.ADMIN_SECRET) {
-      issue("shared_secret", "ADMIN_SECRET", "ADMIN_SECRET and CRON_SECRET must be different values.");
-    }
-    if (env.GITHUB_TOKEN) {
-      warn("unnecessary_secret", "GITHUB_TOKEN", "The Web process does not need GITHUB_TOKEN; keep it on the Worker only.");
-    }
-    if (env.DEEPSEEK_API_KEY) {
-      warn("unnecessary_secret", "DEEPSEEK_API_KEY", "The Web process does not call DeepSeek; keep the API key on the Worker only.");
+    validatePublicRepository(env, issue, warn);
+    if (deploymentMode === "showcase") {
+      for (const variable of ["GITHUB_TOKEN", "DEEPSEEK_API_KEY"]) {
+        if (env[variable]) {
+          issue("showcase_secret_forbidden", variable, `Showcase Web must not receive ${variable}.`);
+        }
+      }
+      for (const variable of ["ADMIN_SECRET", "CRON_SECRET"]) {
+        if (env[variable]) warn("showcase_secret_unused", variable, `Showcase Web does not need ${variable}.`);
+      }
+    } else if (deploymentMode === "full") {
+      validateSecret(env.CRON_SECRET, "CRON_SECRET", issue);
+      validateSecret(env.ADMIN_SECRET, "ADMIN_SECRET", issue);
+      if (env.CRON_SECRET && env.ADMIN_SECRET && env.CRON_SECRET === env.ADMIN_SECRET) {
+        issue("shared_secret", "ADMIN_SECRET", "ADMIN_SECRET and CRON_SECRET must be different values.");
+      }
+      for (const variable of ["GITHUB_TOKEN", "DEEPSEEK_API_KEY"]) {
+        if (env[variable]) issue("web_secret_forbidden", variable, `Full Web must not receive ${variable}; keep it on the Worker only.`);
+      }
     }
   }
 
   if (profile === "worker") {
+    if (deploymentMode && deploymentMode !== "full") {
+      issue("showcase_worker_forbidden", "APP_DEPLOYMENT_MODE", "Showcase deployments must not start a Worker.");
+    }
     validateGithubToken(env.GITHUB_TOKEN, issue);
+    if (deploymentMode === "full") validateDeepSeek(env, issue, warn, { required: true });
     for (const variable of ["ADMIN_SECRET", "CRON_SECRET", "SITE_URL"]) {
       if (env[variable]) warn("unnecessary_secret", variable, `The Worker process does not need ${variable}.`);
     }
@@ -67,12 +85,74 @@ export function validateProductionConfig(env, profile) {
     for (const variable of ["GITHUB_TOKEN", "DEEPSEEK_API_KEY", "ADMIN_SECRET", "CRON_SECRET"]) {
       if (env[variable]) warn("unnecessary_secret", variable, `The migration process does not need ${variable}.`);
     }
-  } else {
-    validateDeepSeek(env, issue, warn);
+  } else if (deploymentMode === "full" && profile === "web") {
     validateNumericSettings(env, issue, warn);
   }
 
-  return { profile, ok: issues.length === 0, issues, warnings };
+  return { profile, deploymentMode, ok: issues.length === 0, issues, warnings };
+}
+
+function validatePublicRepository(env, issue, warn) {
+  const publicationState = env.PUBLIC_REPOSITORY_PUBLISHED?.trim().toLowerCase();
+  if (publicationState && publicationState !== "true" && publicationState !== "false") {
+    issue(
+      "invalid_boolean",
+      "PUBLIC_REPOSITORY_PUBLISHED",
+      "PUBLIC_REPOSITORY_PUBLISHED must be true or false when configured."
+    );
+  }
+
+  let validRepositoryUrl = false;
+  if (env.PUBLIC_REPOSITORY_URL) {
+    try {
+      const url = new URL(env.PUBLIC_REPOSITORY_URL);
+      const pathParts = url.pathname.split("/").filter(Boolean);
+      validRepositoryUrl =
+        url.protocol === "https:" &&
+        url.hostname === "github.com" &&
+        !url.username &&
+        !url.password &&
+        !url.search &&
+        !url.hash &&
+        pathParts.length === 2;
+    } catch {
+      validRepositoryUrl = false;
+    }
+    if (!validRepositoryUrl) {
+      issue(
+        "invalid_repository_url",
+        "PUBLIC_REPOSITORY_URL",
+        "PUBLIC_REPOSITORY_URL must be an HTTPS GitHub owner/repository URL."
+      );
+    }
+  }
+
+  if (publicationState === "true" && !validRepositoryUrl) {
+    issue(
+      "published_repository_missing",
+      "PUBLIC_REPOSITORY_URL",
+      "A valid PUBLIC_REPOSITORY_URL is required before marking the repository published."
+    );
+  } else if (env.PUBLIC_REPOSITORY_URL && publicationState !== "true") {
+    warn(
+      "repository_link_hidden",
+      "PUBLIC_REPOSITORY_PUBLISHED",
+      "The repository link stays hidden until PUBLIC_REPOSITORY_PUBLISHED=true."
+    );
+  }
+}
+
+function validateDeploymentMode(value, issue) {
+  if (!value) {
+    issue("required", "APP_DEPLOYMENT_MODE", "APP_DEPLOYMENT_MODE must be explicitly set to showcase or full.");
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!deploymentModes.has(normalized)) {
+    issue("invalid_deployment_mode", "APP_DEPLOYMENT_MODE", "APP_DEPLOYMENT_MODE must be showcase or full.");
+    return null;
+  }
+  return normalized;
 }
 
 function validateDatabaseUrl(value, issue, warn) {
@@ -87,6 +167,14 @@ function validateDatabaseUrl(value, issue, warn) {
     }
     if (!url.hostname || !url.username || url.pathname.length < 2) {
       issue("structure", "DATABASE_URL", "DATABASE_URL must include host, username, and database name.");
+    }
+    const sslMode = url.searchParams.get("sslmode")?.trim().toLowerCase();
+    if (sslMode !== "require" && sslMode !== "verify-full") {
+      issue(
+        "database_tls_required",
+        "DATABASE_URL",
+        "Production DATABASE_URL must set sslmode=require or sslmode=verify-full."
+      );
     }
     if (!url.password) warn("passwordless_database", "DATABASE_URL", "Confirm that passwordless database authentication is intentional.");
   } catch {
@@ -138,9 +226,11 @@ function validateGithubToken(value, issue) {
   }
 }
 
-function validateDeepSeek(env, issue, warn) {
+function validateDeepSeek(env, issue, warn, options = {}) {
   if (!env.DEEPSEEK_API_KEY) {
-    warn("deepseek_disabled", "DEEPSEEK_API_KEY", "DeepSeek is disabled; the application will use rule fallback.");
+    const message = "DEEPSEEK_API_KEY is required by the Full Worker for complete radar and study-plan capabilities.";
+    if (options.required) issue("required", "DEEPSEEK_API_KEY", message);
+    else warn("deepseek_disabled", "DEEPSEEK_API_KEY", "DeepSeek is disabled; the application will use rule fallback.");
     return;
   }
   const baseUrl = env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";

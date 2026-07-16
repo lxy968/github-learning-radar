@@ -20,10 +20,12 @@ type ProgressSummary = {
 
 export function BookmarkedRoutesBoard({
   items,
-  detailedPlans
+  detailedPlans,
+  showcaseMode = false
 }: {
   items: RadarRecommendation[];
   detailedPlans: DetailedStudyPlan[];
+  showcaseMode?: boolean;
 }) {
   const [progressByRepo] = useStateFromItems(items, detailedPlans);
 
@@ -82,9 +84,9 @@ export function BookmarkedRoutesBoard({
               <div className="flex flex-col gap-4 border-b border-slate-100 pb-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={percent === 100 ? "green" : percent > 0 ? "blue" : "neutral"}>
-                    {progress.plan ? `完成度 ${percent}%` : "尚未生成详细方案"}
+                    {progress.plan ? `完成度 ${percent}%` : showcaseMode ? "未预置演示方案" : "尚未生成详细方案"}
                   </Badge>
-                  <Badge>{progress.label}</Badge>
+                  <Badge>{progress.plan ? progress.label : showcaseMode ? "准备中" : progress.label}</Badge>
                   <Badge tone="blue">{item.repo.primaryLanguage}</Badge>
                 </div>
 
@@ -100,7 +102,11 @@ export function BookmarkedRoutesBoard({
                 <div>
                   <div className="flex items-center justify-between text-xs font-medium text-slate-500">
                     <span>
-                      {progress.plan ? `已完成 ${progress.done}/${progress.total} 个步骤` : "生成后开始记录具体步骤"}
+                      {progress.plan
+                        ? `已完成 ${progress.done}/${progress.total} 个步骤`
+                        : showcaseMode
+                          ? "有预置方案后即可记录具体步骤"
+                          : "生成后开始记录具体步骤"}
                     </span>
                     <span>按完成度排行</span>
                   </div>
@@ -129,18 +135,24 @@ export function BookmarkedRoutesBoard({
                   </div>
                   <div className="min-w-0 flex-1">
                     <h3 className="text-sm font-semibold text-slate-900">
-                      {progress.plan ? `${progress.plan.duration} 天具体学习方案` : "生成具体学习方案"}
+                      {progress.plan
+                        ? `${progress.plan.duration} 天具体学习方案`
+                        : showcaseMode
+                          ? "公开演示方案准备中"
+                          : "生成具体学习方案"}
                     </h3>
                     <p className="mt-1 text-sm leading-6 text-slate-600">
                       {progress.plan
                         ? progress.plan.summary
-                        : "按当前仓库的 README、技术栈和文件信号生成具体操作、验证标准与交付物。"}
+                        : showcaseMode
+                          ? "公开站不会现场生成；你仍可查看项目详情，或选择已有预置方案的推荐。"
+                          : "按当前仓库的 README、技术栈和文件信号生成具体操作、验证标准与交付物。"}
                     </p>
                     <Link
                       href={learningPlanHref}
                       className="focus-ring mt-3 inline-flex items-center gap-1 text-sm font-medium text-teal-700 hover:text-teal-800"
                     >
-                      {progress.plan ? "继续学习" : "去生成"}
+                      {progress.plan ? "继续学习" : showcaseMode ? "查看方案状态" : "去生成"}
                       <ArrowRight size={14} />
                     </Link>
                   </div>

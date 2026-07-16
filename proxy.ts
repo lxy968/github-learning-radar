@@ -3,14 +3,25 @@ import {
   anonymousSessionCookieName,
   anonymousSessionMaxAgeSeconds,
   createAnonymousSessionToken,
+  deriveAnonymousUserId,
   isValidAnonymousSessionToken
 } from "@/lib/anonymous-session";
+import { registerAnonymousSession } from "@/lib/anonymous-session-store";
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const existingToken = request.cookies.get(anonymousSessionCookieName)?.value;
   if (existingToken && isValidAnonymousSessionToken(existingToken)) return NextResponse.next();
 
-  const token = createAnonymousSessionToken();
+  const issuedAt = new Date();
+  const token = createAnonymousSessionToken(issuedAt);
+  const userId = deriveAnonymousUserId(token, issuedAt);
+  if (!userId) throw new Error("Failed to create an anonymous session identity.");
+  const registered = await registerAnonymousSession(
+    userId,
+    new Date(issuedAt.getTime() + anonymousSessionMaxAgeSeconds * 1_000),
+    issuedAt
+  );
+  if (!registered) throw new Error("Failed to register an anonymous session identity.");
   const requestHeaders = new Headers(request.headers);
   const existingCookie = requestHeaders.get("cookie");
   requestHeaders.set(
@@ -29,5 +40,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)"]
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|api/health).*)"]
 };

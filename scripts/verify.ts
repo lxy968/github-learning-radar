@@ -21,6 +21,11 @@ import {
 } from "../lib/ai/detailed-study-plan";
 import { getConfiguredAiModel } from "../lib/ai/provider";
 import {
+  assertBackgroundJobsEnabled,
+  getDeploymentMode,
+  isShowcaseMode
+} from "../lib/deployment-mode";
+import {
   buildDetailedStudyPlanCacheMetadata,
   createDetailedStudyPlanGenerationContext,
   detailedStudyPlanPromptVersion,
@@ -32,6 +37,7 @@ import {
   listDetailedStudyPlans
 } from "../lib/detailed-study-plans";
 import {
+  cancelDetailedStudyPlanJob,
   enqueueDetailedStudyPlanJob,
   executeDetailedStudyPlanJob
 } from "../lib/study-plan-jobs";
@@ -39,6 +45,7 @@ import { authorizeAdminRequest, consumeRequestRateLimit } from "../lib/api-secur
 import { getDetailedStudyPlanSteps, getDetailedStudyPlanStorageKey } from "../lib/detailed-study-progress";
 import {
   anonymousSessionCookieName,
+  anonymousSessionMaxAgeSeconds,
   createAnonymousSessionToken,
   deriveAnonymousUserId
 } from "../lib/anonymous-session";
@@ -49,7 +56,14 @@ import { createRadarRunProjection } from "../lib/radar-run-projection";
 import { rebuildRadarRunProjections } from "../lib/radar-runs";
 import { getRefreshScheduleDecision } from "../lib/refresh-schedule";
 import { shouldRequireGithubTokenAtWebEdge } from "../lib/refresh-policy";
+import { getJobQueueDegradationReasons } from "../lib/job-health";
+import { runFairWorkerCycle, type WorkerKind } from "../lib/worker-scheduler";
 import { getSiteUrl } from "../lib/site-url";
+import {
+  createShowcaseStudyPlan,
+  listShowcaseStudyPlans,
+  showcaseStudyPlanVersion
+} from "../lib/showcase-study-plans";
 import { runDataRetention, type DataRetentionPolicy } from "../lib/data-retention";
 import { classifyOperationalError, getRetryDelayMs, withOperationalRetry } from "../lib/operational-errors";
 import { sanitizeReadmeExcerpt } from "../lib/readme";
@@ -68,11 +82,18 @@ import { scoreRepository } from "../lib/scoring";
 import { defaultPreference, seedRepos } from "../lib/seed-data";
 import { uniqueTextValues } from "../lib/text-lists";
 import { RecommendationCard } from "../components/recommendation-card";
+import { normalizePublicRepositoryUrl, PortfolioOverview } from "../components/portfolio-overview";
 import { DetailedStudyPlanBuilder } from "../components/detailed-study-plan-builder";
 import { CandidateRepositoryBrowser } from "../components/candidate-repository-browser";
 import { RepositorySignalBadge } from "../components/repository-signal-badge";
-import { findMissingGitignoreRules, findPotentialSecrets } from "./repository-hygiene";
+import {
+  findMissingGitignoreRules,
+  findPotentialSecrets,
+  findVercelDeploymentConfigIssues
+} from "./repository-hygiene";
 import { assertPostgresIntegrationTarget } from "./postgres-integration-safety";
+import { assertMigrationChecksum, calculateMigrationChecksum } from "./migration-integrity";
+import { isForbiddenHistoricalPath } from "./git-history-secret-scan";
 import { exploreNavItems, isNavItemActive, primaryNavItems } from "../components/sidebar-nav";
 import type {
   DetailedStudyPlan,
@@ -87,6 +108,10 @@ import { POST as createStudyPlan } from "../app/api/study-plans/route";
 async function main() {
   verifyProviderSelection();
   verifyProductionConfigPreflight();
+  verifyQueueHealthPolicy();
+  await verifyFairWorkerScheduler();
+  verifyMigrationIntegrity();
+  verifyDeploymentModeBoundary();
   verifyRuntimeSiteUrl();
   verifyRefreshProcessSecretBoundary();
   verifyRepositoryHygieneRules();
@@ -97,8 +122,11 @@ async function main() {
   verifyCandidateServerPagination();
   verifyRadarRunProjection();
   verifyTopCategory();
+  verifyPortfolioOverview();
+  verifyShowcaseStudyPlanFixture();
   verifyRecommendationCardHierarchy();
   verifyNavigationStructure();
+  await verifySingleMainLandmarkSources();
   verifyRefreshSchedule();
   verifyDynamicDiscoveryWindow();
   verifyAdminAuthorization();
@@ -122,6 +150,8 @@ async function main() {
   await verifyConcurrentAnalysisKeepsRankOrder();
   await verifyAiAnalysisLimit();
   await verifyStudyPlanRequestValidation();
+  await verifyShowcaseCostFirewall();
+  await verifyAnonymousForceBoundary();
   await verifyRequestRateLimit();
   await verifyDataRetention();
   await verifySessionProxyCookie();
@@ -162,6 +192,14 @@ function verifyProviderSelection() {
   });
 
   assert.equal(openAIOnlyConfig, null);
+  assert.equal(
+    getConfiguredAiModel("radar-analysis", {
+      NODE_ENV: "production",
+      APP_DEPLOYMENT_MODE: "showcase",
+      DEEPSEEK_API_KEY: "must-not-be-used"
+    }),
+    null
+  );
 }
 
 function verifyProductionConfigPreflight() {
@@ -172,7 +210,8 @@ function verifyProductionConfigPreflight() {
     TEMP: process.env.TEMP,
     TMP: process.env.TMP,
     NODE_ENV: "production",
-    DATABASE_URL: "postgresql://radar@postgres.example.invalid/radar"
+    APP_DEPLOYMENT_MODE: "full",
+    DATABASE_URL: "postgresql://radar@postgres.example.invalid/radar?sslmode=require"
   } as NodeJS.ProcessEnv;
   const web = spawnSync(
     process.execPath,
@@ -193,6 +232,73 @@ function verifyProductionConfigPreflight() {
   assert.deepEqual(webResult.issues, []);
   assert.equal(web.stdout.includes("postgresql://"), false);
 
+  const publishedWithoutUrl = spawnSync(
+    process.execPath,
+    [script, "--profile=web", "--json"],
+    {
+      encoding: "utf8",
+      env: {
+        ...commonEnv,
+        SITE_URL: "https://radar.example.invalid",
+        CRON_SECRET: "verification-cron-secret-0000000000000000",
+        ADMIN_SECRET: "verification-admin-secret-000000000000000",
+        PUBLIC_REPOSITORY_PUBLISHED: "true"
+      }
+    }
+  );
+  assert.equal(publishedWithoutUrl.status, 1);
+  assert.ok(publishedWithoutUrl.stdout.includes("published_repository_missing"));
+
+  const insecureDatabase = spawnSync(
+    process.execPath,
+    [script, "--profile=web", "--json"],
+    {
+      encoding: "utf8",
+      env: {
+        ...commonEnv,
+        DATABASE_URL: "postgresql://radar@postgres.example.invalid/radar",
+        SITE_URL: "https://radar.example.invalid",
+        CRON_SECRET: "verification-cron-secret-0000000000000000",
+        ADMIN_SECRET: "verification-admin-secret-000000000000000"
+      }
+    }
+  );
+  assert.equal(insecureDatabase.status, 1);
+  assert.ok(insecureDatabase.stdout.includes("database_tls_required"));
+
+  const showcaseWeb = spawnSync(
+    process.execPath,
+    [script, "--profile=web", "--json"],
+    {
+      encoding: "utf8",
+      env: {
+        ...commonEnv,
+        APP_DEPLOYMENT_MODE: "showcase",
+        SITE_URL: "https://showcase.example.invalid"
+      }
+    }
+  );
+  assert.equal(showcaseWeb.status, 0, showcaseWeb.stderr);
+  const showcaseResult = JSON.parse(showcaseWeb.stdout) as { ok?: boolean; deploymentMode?: string };
+  assert.equal(showcaseResult.ok, true);
+  assert.equal(showcaseResult.deploymentMode, "showcase");
+
+  const showcaseWithKey = spawnSync(
+    process.execPath,
+    [script, "--profile=web", "--json"],
+    {
+      encoding: "utf8",
+      env: {
+        ...commonEnv,
+        APP_DEPLOYMENT_MODE: "showcase",
+        SITE_URL: "https://showcase.example.invalid",
+        DEEPSEEK_API_KEY: "must-not-reach-showcase"
+      }
+    }
+  );
+  assert.equal(showcaseWithKey.status, 1);
+  assert.ok(showcaseWithKey.stdout.includes("showcase_secret_forbidden"));
+
   const missingWorkerToken = spawnSync(
     process.execPath,
     [script, "--profile=worker", "--json"],
@@ -209,7 +315,11 @@ function verifyProductionConfigPreflight() {
     [script, "--profile=worker", "--json"],
     {
       encoding: "utf8",
-      env: { ...commonEnv, GITHUB_TOKEN: "verification-github-token-0000000000000000" }
+      env: {
+        ...commonEnv,
+        GITHUB_TOKEN: "verification-github-token-0000000000000000",
+        DEEPSEEK_API_KEY: "verification-deepseek-key-000000000000000"
+      }
     }
   );
   assert.equal(worker.status, 0, worker.stderr);
@@ -231,6 +341,94 @@ function verifyProductionConfigPreflight() {
   );
   assert.equal(legacySiteUrl.status, 1);
   assert.ok(legacySiteUrl.stdout.includes("legacy_site_url"));
+}
+
+function verifyQueueHealthPolicy() {
+  const now = new Date("2030-01-01T00:30:00.000Z");
+  assert.deepEqual(
+    getJobQueueDegradationReasons(
+      "radar",
+      { queued: 1, readyQueued: 1, running: 0, staleRunning: 0, oldestQueuedAt: "2030-01-01T00:00:00.000Z" },
+      now,
+      { maxReadyQueued: 10, maxReadyWaitMs: 10 * 60_000 }
+    ),
+    ["radar_oldest_ready_exceeded"]
+  );
+  assert.deepEqual(
+    getJobQueueDegradationReasons(
+      "study-plan",
+      { queued: 12, readyQueued: 10, running: 1, staleRunning: 1, oldestQueuedAt: null },
+      now,
+      { maxReadyQueued: 10, maxReadyWaitMs: 30 * 60_000 }
+    ),
+    ["study_plan_stale_running", "study_plan_ready_backlog"]
+  );
+  assert.deepEqual(
+    getJobQueueDegradationReasons(
+      "radar",
+      { queued: 1, readyQueued: 0, running: 0, staleRunning: 0, oldestQueuedAt: null },
+      now,
+      { maxReadyQueued: 10, maxReadyWaitMs: 10 * 60_000 }
+    ),
+    []
+  );
+}
+
+async function verifyFairWorkerScheduler() {
+  const processed = { status: "processed" as const };
+  const idle = { status: "idle" as const };
+  const order: string[] = [];
+  let preferred: WorkerKind = "study-plan";
+  for (let cycleIndex = 0; cycleIndex < 4; cycleIndex += 1) {
+    const cycle: { nextPreferredKind: WorkerKind } = await runFairWorkerCycle(preferred, {
+      studyPlan: async () => {
+        order.push("study-plan");
+        return processed;
+      },
+      radar: async () => {
+        order.push("radar");
+        return processed;
+      }
+    });
+    preferred = cycle.nextPreferredKind;
+  }
+  assert.deepEqual(order, ["study-plan", "radar", "study-plan", "radar"]);
+
+  const fallbackOrder: string[] = [];
+  const fallback = await runFairWorkerCycle("radar", {
+    radar: async () => {
+      fallbackOrder.push("radar");
+      return idle;
+    },
+    studyPlan: async () => {
+      fallbackOrder.push("study-plan");
+      return processed;
+    }
+  });
+  assert.deepEqual(fallbackOrder, ["radar", "study-plan"]);
+  assert.equal(fallback.worker, "study-plan");
+  assert.equal(fallback.nextPreferredKind, "radar");
+}
+
+function verifyMigrationIntegrity() {
+  const checksum = calculateMigrationChecksum("SELECT 1;\n");
+  assert.match(checksum, /^[a-f0-9]{64}$/);
+  assert.doesNotThrow(() => assertMigrationChecksum("0001_test.sql", checksum, checksum));
+  assert.throws(
+    () => assertMigrationChecksum("0001_test.sql", checksum, calculateMigrationChecksum("SELECT 2;\n")),
+    /must not be edited/
+  );
+}
+
+function verifyDeploymentModeBoundary() {
+  assert.equal(getDeploymentMode({ NODE_ENV: "development" }), "full");
+  assert.equal(getDeploymentMode({ NODE_ENV: "production" }), "showcase");
+  assert.equal(getDeploymentMode({ NODE_ENV: "production", APP_DEPLOYMENT_MODE: "full" }), "full");
+  assert.equal(isShowcaseMode({ NODE_ENV: "production", APP_DEPLOYMENT_MODE: "invalid" }), true);
+  assert.throws(
+    () => assertBackgroundJobsEnabled("verification job", { NODE_ENV: "production", APP_DEPLOYMENT_MODE: "showcase" }),
+    /forbids verification job/
+  );
 }
 
 function verifyRuntimeSiteUrl() {
@@ -262,6 +460,23 @@ function verifyRepositoryHygieneRules() {
     []
   );
   assert.deepEqual(findPotentialSecrets("Authorization: Bearer verification-admin-secret"), []);
+  assert.deepEqual(
+    findVercelDeploymentConfigIssues({
+      framework: "nextjs",
+      buildCommand: "pnpm production:check -- --profile=web && pnpm build"
+    }),
+    []
+  );
+  assert.ok(
+    findVercelDeploymentConfigIssues({ framework: "nextjs", buildCommand: "pnpm build", crons: [] }).some(
+      (issue) => issue.includes("preflight")
+    )
+  );
+  assert.ok(findVercelDeploymentConfigIssues({ framework: "nextjs", buildCommand: "pnpm build", env: {} }).length > 0);
+  assert.equal(isForbiddenHistoricalPath(".env.local"), true);
+  assert.equal(isForbiddenHistoricalPath("archive/user-data.sqlite3"), true);
+  assert.equal(isForbiddenHistoricalPath(".next/server/app.js"), true);
+  assert.equal(isForbiddenHistoricalPath(".env.example"), false);
   assert.doesNotThrow(() =>
     assertPostgresIntegrationTarget(
       "postgresql://radar:radar_local_integration_only@postgres:5432/radar_integration",
@@ -541,6 +756,70 @@ function verifyRecommendationCardHierarchy() {
   assert.equal(tracedMarkup.includes("test-model"), false);
 }
 
+function verifyPortfolioOverview() {
+  const pendingMarkup = renderToStaticMarkup(createElement(PortfolioOverview, {}));
+  const repositoryUrl = "https://github.com/lxy968/github-learning-radar";
+  const preparedMarkup = renderToStaticMarkup(createElement(PortfolioOverview, { repositoryUrl }));
+  const publishedMarkup = renderToStaticMarkup(
+    createElement(PortfolioOverview, { dataSource: "github", repositoryUrl, repositoryPublished: true })
+  );
+  const requiredContent = [
+    "这个项目把公开仓库转成有依据、有范围、有验收标准和进度记录的学习任务",
+    "所有人如何在两分钟内体验",
+    "从发现仓库到形成学习任务",
+    "为什么这样设计",
+    "如何防止公开访客消耗 DeepSeek Token",
+    "线上作品集版",
+    "完整自部署版",
+    "开源后如何 Fork、配置自己的 Key 并部署",
+    "已完成的测试、CI、数据库和浏览器证据"
+  ];
+
+  assert.ok(requiredContent.every((content) => pendingMarkup.includes(content)));
+  assert.ok(pendingMarkup.includes("加载内置演示仓库快照"));
+  assert.ok(pendingMarkup.includes("开源准备中"));
+  assert.equal(pendingMarkup.includes(repositoryUrl), false);
+  assert.ok(preparedMarkup.includes("仓库地址已登记"));
+  assert.equal(preparedMarkup.includes(repositoryUrl), false);
+  assert.ok(publishedMarkup.includes(repositoryUrl));
+  assert.ok(publishedMarkup.includes("发现近期活跃仓库"));
+  assert.equal(normalizePublicRepositoryUrl(`${repositoryUrl}.git`), repositoryUrl);
+  assert.equal(normalizePublicRepositoryUrl("http://github.com/lxy968/github-learning-radar"), undefined);
+  assert.equal(normalizePublicRepositoryUrl("javascript:alert(1)"), undefined);
+}
+
+function verifyShowcaseStudyPlanFixture() {
+  const recommendation = getRecommendations(defaultPreference)[0];
+  const showcaseEnv = {
+    NODE_ENV: "production",
+    APP_DEPLOYMENT_MODE: "showcase",
+    DEEPSEEK_API_KEY: "must-not-be-used"
+  } as NodeJS.ProcessEnv;
+  const first = createShowcaseStudyPlan(recommendation, defaultPreference, showcaseEnv);
+  const repeated = createShowcaseStudyPlan(recommendation, defaultPreference, showcaseEnv);
+
+  assert.equal(first.id, repeated.id);
+  assert.ok(first.id.startsWith(`${showcaseStudyPlanVersion}-${recommendation.repo.id}-`));
+  assert.equal(first.duration, 3);
+  assert.equal(first.days.length, 3);
+  assert.equal(first.generatedThroughDay, 3);
+  assert.equal(first.generationStatus, "complete");
+  assert.equal(first.providerAttempts?.length, 0);
+  assert.equal(first.cache?.provider, "rule");
+  assert.equal(first.cache?.modelId, showcaseStudyPlanVersion);
+  assert.equal(/deepseek-v4/i.test(JSON.stringify(first)), false);
+  assert.ok(first.days.every((day) => day.steps.length > 0));
+  assert.deepEqual(listShowcaseStudyPlans([recommendation], defaultPreference, showcaseEnv), [first]);
+  assert.deepEqual(
+    listShowcaseStudyPlans(
+      [recommendation],
+      defaultPreference,
+      { NODE_ENV: "production", APP_DEPLOYMENT_MODE: "full" } as NodeJS.ProcessEnv
+    ),
+    []
+  );
+}
+
 function verifyNavigationStructure() {
   assert.deepEqual(
     primaryNavItems.map((item) => item.label),
@@ -554,6 +833,16 @@ function verifyNavigationStructure() {
   assert.equal(isNavItemActive("/projects/demo/repo/learning-plan", primaryNavItems[1]), true);
   assert.equal(isNavItemActive("/candidates/demo/repo", exploreNavItems[0]), true);
   assert.equal(isNavItemActive("/history", primaryNavItems[1]), false);
+}
+
+async function verifySingleMainLandmarkSources() {
+  const appShellSource = await fs.readFile(path.join(process.cwd(), "components", "app-shell.tsx"), "utf8");
+  const detailSources = await Promise.all([
+    fs.readFile(path.join(process.cwd(), "app", "projects", "[owner]", "[repo]", "page.tsx"), "utf8"),
+    fs.readFile(path.join(process.cwd(), "app", "candidates", "[owner]", "[repo]", "page.tsx"), "utf8")
+  ]);
+  assert.equal(appShellSource.match(/<main(?:\s|>)/g)?.length, 1);
+  assert.ok(detailSources.every((source) => !/<main(?:\s|>)/.test(source)));
 }
 
 function verifyRefreshSchedule() {
@@ -624,17 +913,25 @@ function verifyOperationalErrorClassification() {
 }
 
 function verifyAnonymousSessionIdentity() {
-  const firstToken = createAnonymousSessionToken();
-  const secondToken = createAnonymousSessionToken();
-  const firstUserId = deriveAnonymousUserId(firstToken);
-  const secondUserId = deriveAnonymousUserId(secondToken);
+  const issuedAt = new Date("2030-01-01T00:00:00.000Z");
+  const firstToken = createAnonymousSessionToken(issuedAt);
+  const secondToken = createAnonymousSessionToken(issuedAt);
+  const firstUserId = deriveAnonymousUserId(firstToken, issuedAt);
+  const secondUserId = deriveAnonymousUserId(secondToken, issuedAt);
 
-  assert.equal(firstToken.length, 43);
+  assert.match(firstToken, /^v1\.[0-9a-z]{1,10}\.[A-Za-z0-9_-]{43}$/);
   assert.notEqual(firstToken, secondToken);
   assert.match(firstUserId ?? "", /^anon_[a-f0-9]{64}$/);
   assert.notEqual(firstUserId, secondUserId);
   assert.equal(firstUserId?.includes(firstToken), false);
-  assert.equal(deriveAnonymousUserId("predictable-session"), null);
+  assert.equal(deriveAnonymousUserId("predictable-session", issuedAt), null);
+  assert.equal(
+    deriveAnonymousUserId(
+      firstToken,
+      new Date(issuedAt.getTime() + anonymousSessionMaxAgeSeconds * 1_000 + 1)
+    ),
+    null
+  );
 }
 
 async function verifyOperationalRetry() {
@@ -690,9 +987,12 @@ async function verifyAnonymousUserIsolation() {
     const sessions = await import("../lib/anonymous-session-store");
     const preferences = await import("../lib/preferences");
     const userState = await import("../lib/user-state");
-    const expiresAt = new Date("2031-01-01T00:00:00.000Z");
-    await sessions.touchAnonymousSession(firstUserId, expiresAt, new Date("2030-01-01T00:00:00.000Z"));
-    await sessions.touchAnonymousSession(secondUserId, expiresAt, new Date("2030-01-01T00:00:00.000Z"));
+    const progress = await import("../lib/learning-progress");
+    const userData = await import("../lib/user-data");
+    const registeredAt = new Date();
+    const expiresAt = new Date(registeredAt.getTime() + anonymousSessionMaxAgeSeconds * 1_000);
+    await sessions.registerAnonymousSession(firstUserId, expiresAt, registeredAt);
+    await sessions.registerAnonymousSession(secondUserId, expiresAt, registeredAt);
 
     const firstPreference = { ...defaultPreference, languages: ["Rust"], goal: "source-reading" as const };
     await preferences.saveUserPreference(firstPreference, firstUserId);
@@ -719,11 +1019,109 @@ async function verifyAnonymousUserIsolation() {
       event?: { userId?: string };
       interaction?: { bookmarked?: boolean };
     };
-    assert.equal(maliciousResponse.status, 201);
-    assert.equal(maliciousPayload.interaction?.bookmarked, true);
-    assert.equal("userId" in (maliciousPayload.event ?? {}), false);
+    assert.equal(maliciousResponse.status, 400);
+    assert.equal(maliciousPayload.interaction?.bookmarked, undefined);
     assert.equal((await userState.getInteraction(firstUserId, repoId)).bookmarked, false);
+
+    const validFeedbackResponse = await feedbackRoute.POST(
+      new Request("http://localhost/api/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${anonymousSessionCookieName}=${secondToken}`
+        },
+        body: JSON.stringify({ repoId, eventType: "bookmarked", value: true })
+      })
+    );
+    const validFeedbackPayload = (await validFeedbackResponse.json()) as {
+      event?: { userId?: string; payload?: unknown };
+    };
+    assert.equal(validFeedbackResponse.status, 201);
+    assert.equal("userId" in (validFeedbackPayload.event ?? {}), false);
+    assert.equal("payload" in (validFeedbackPayload.event ?? {}), false);
     assert.equal((await userState.getInteraction(secondUserId, repoId)).bookmarked, true);
+
+    const arbitraryPayloadResponse = await feedbackRoute.POST(
+      new Request("http://localhost/api/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${anonymousSessionCookieName}=${secondToken}`
+        },
+        body: JSON.stringify({ repoId, eventType: "bookmarked", value: true, payload: { note: "not allowed" } })
+      })
+    );
+    assert.equal(arbitraryPayloadResponse.status, 400);
+
+    const makeFeedbackBody = (size: number) => {
+      const template = JSON.stringify({ repoId, eventType: "bookmarked", value: true, padding: "" });
+      assert.ok(template.length <= size);
+      return template.replace(/""}$/, `"${"x".repeat(size - template.length)}"}`);
+    };
+    const boundaryFeedbackResponse = await feedbackRoute.POST(
+      new Request("http://localhost/api/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${anonymousSessionCookieName}=${secondToken}`
+        },
+        body: makeFeedbackBody(2_048)
+      })
+    );
+    assert.equal(boundaryFeedbackResponse.status, 400);
+    const oversizedFeedbackResponse = await feedbackRoute.POST(
+      new Request("http://localhost/api/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${anonymousSessionCookieName}=${secondToken}`
+        },
+        body: makeFeedbackBody(2_049)
+      })
+    );
+    assert.equal(oversizedFeedbackResponse.status, 413);
+
+    const invalidMediaTypeResponse = await feedbackRoute.POST(
+      new Request("http://localhost/api/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json-malformed",
+          Cookie: `${anonymousSessionCookieName}=${secondToken}`
+        },
+        body: JSON.stringify({ repoId, eventType: "bookmarked", value: true })
+      })
+    );
+    assert.equal(invalidMediaTypeResponse.status, 415);
+
+    const invalidUtf8Response = await feedbackRoute.POST(
+      new Request("http://localhost/api/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${anonymousSessionCookieName}=${secondToken}`
+        },
+        body: new Uint8Array([0xff])
+      })
+    );
+    assert.equal(invalidUtf8Response.status, 400);
+
+    const failedBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error("verification stream failure"));
+      }
+    });
+    const failedBodyResponse = await feedbackRoute.POST(
+      new Request("http://localhost/api/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${anonymousSessionCookieName}=${secondToken}`
+        },
+        body: failedBody,
+        duplex: "half"
+      } as RequestInit & { duplex: "half" })
+    );
+    assert.equal(failedBodyResponse.status, 400);
 
     const preferencesRoute = await import("../app/api/preferences/route");
     const preferenceResponse = await preferencesRoute.PUT(
@@ -740,7 +1138,6 @@ async function verifyAnonymousUserIsolation() {
     assert.deepEqual((await preferences.getUserPreference(firstUserId)).languages, ["Rust"]);
     assert.deepEqual((await preferences.getUserPreference(secondUserId)).languages, ["Go"]);
 
-    const progress = await import("../lib/learning-progress");
     await progress.mergeLearningProgress(firstUserId, "detailed:verify-plan", [
       { stepId: "step-1", completed: true, updatedAt: "2030-01-01T00:02:00.000Z" }
     ], new Date("2030-01-01T00:02:00.000Z"));
@@ -768,6 +1165,48 @@ async function verifyAnonymousUserIsolation() {
     assert.equal((await progress.getLearningProgress(firstUserId, "detailed:verify-plan"))[0]?.completed, true);
     assert.equal((await progress.getLearningProgress(secondUserId, "detailed:verify-plan"))[0]?.completed, false);
 
+    const expiredIssuedAt = new Date(Date.now() - anonymousSessionMaxAgeSeconds * 2_000);
+    const expiredToken = createAnonymousSessionToken(expiredIssuedAt);
+    const expiredUserId = deriveAnonymousUserId(expiredToken, expiredIssuedAt);
+    assert.ok(expiredUserId);
+    await sessions.registerAnonymousSession(
+      expiredUserId,
+      new Date(expiredIssuedAt.getTime() + anonymousSessionMaxAgeSeconds * 1_000),
+      expiredIssuedAt
+    );
+    await preferences.saveUserPreference({ ...defaultPreference, languages: ["Python"] }, expiredUserId);
+    await userState.recordFeedback(expiredUserId, { repoId, eventType: "want_to_learn", value: true });
+    await progress.mergeLearningProgress(expiredUserId, "detailed:expired-plan", [
+      { stepId: "expired-step", completed: true, updatedAt: "2028-01-01T00:00:00.000Z" }
+    ]);
+
+    const expiredUserIds = [expiredUserId];
+    for (let index = 1; index < 25; index += 1) {
+      const token = createAnonymousSessionToken(expiredIssuedAt);
+      const userId = deriveAnonymousUserId(token, expiredIssuedAt);
+      assert.ok(userId);
+      await sessions.registerAnonymousSession(
+        userId,
+        new Date(expiredIssuedAt.getTime() + anonymousSessionMaxAgeSeconds * 1_000),
+        expiredIssuedAt
+      );
+      expiredUserIds.push(userId);
+    }
+
+    const cleanup = await userData.cleanupExpiredAnonymousUserData(new Date(), 10, 4);
+    assert.equal(cleanup.storage, "local-json");
+    assert.equal(cleanup.batches, 3);
+    assert.deepEqual(new Set(cleanup.deletedUserIds), new Set(expiredUserIds));
+    assert.deepEqual((await preferences.getUserPreference(expiredUserId)).languages, defaultPreference.languages);
+    assert.equal((await userState.getInteraction(expiredUserId, repoId)).wantToLearn, false);
+    assert.equal((await progress.getLearningProgress(expiredUserId, "detailed:expired-plan")).length, 0);
+    assert.equal((await userState.getInteraction(firstUserId, repoId)).wantToLearn, true);
+    const remainingSessions = JSON.parse(await fs.readFile(files[2], "utf8")) as {
+      sessions?: Record<string, unknown>;
+    };
+    assert.equal(firstUserId in (remainingSessions.sessions ?? {}), true);
+    assert.equal(secondUserId in (remainingSessions.sessions ?? {}), true);
+
     const sessionRoute = await import("../app/api/session/route");
     const deleteResponse = await sessionRoute.DELETE(
       new Request("http://localhost/api/session", {
@@ -781,6 +1220,18 @@ async function verifyAnonymousUserIsolation() {
     assert.equal((await progress.getLearningProgress(secondUserId, "detailed:verify-plan")).length, 0);
     assert.equal((await userState.getInteraction(firstUserId, repoId)).wantToLearn, true);
     assert.equal((await progress.getLearningProgress(firstUserId, "detailed:verify-plan"))[0]?.completed, true);
+
+    const replayedDeletedSession = await feedbackRoute.POST(
+      new Request("http://localhost/api/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${anonymousSessionCookieName}=${secondToken}`
+        },
+        body: JSON.stringify({ repoId, eventType: "bookmarked", value: true })
+      })
+    );
+    assert.equal(replayedDeletedSession.status, 401);
   } finally {
     await Promise.all(files.map((file) => fs.rm(file, { force: true })));
     restoreEnv("PREFERENCE_STORE_FILE", previousPreferenceStore);
@@ -792,14 +1243,27 @@ async function verifyAnonymousUserIsolation() {
 }
 
 async function verifySessionProxyCookie() {
+  const previousSessionStore = process.env.ANONYMOUS_SESSION_STORE_FILE;
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  const sessionStore = path.join(os.tmpdir(), `learning-radar-proxy-session-${process.pid}-${Date.now()}.json`);
+  process.env.ANONYMOUS_SESSION_STORE_FILE = sessionStore;
+  delete process.env.DATABASE_URL;
   const { NextRequest } = await import("next/server");
   const { proxy } = await import("../proxy");
-  const response = proxy(new NextRequest("http://localhost/settings"));
-  const cookie = response.headers.get("set-cookie") ?? "";
-  assert.match(cookie, /glr_session=[A-Za-z0-9_-]{43}/);
-  assert.match(cookie, /HttpOnly/i);
-  assert.match(cookie, /SameSite=lax/i);
-  assert.match(cookie, /Max-Age=31536000/i);
+  try {
+    const response = await proxy(new NextRequest("http://localhost/settings"));
+    const cookie = response.headers.get("set-cookie") ?? "";
+    assert.match(cookie, /glr_session=v1\.[0-9a-z]{1,10}\.[A-Za-z0-9_-]{43}/);
+    assert.match(cookie, /HttpOnly/i);
+    assert.match(cookie, /SameSite=lax/i);
+    assert.match(cookie, /Max-Age=31536000/i);
+    const stored = JSON.parse(await fs.readFile(sessionStore, "utf8")) as { sessions?: Record<string, unknown> };
+    assert.equal(Object.keys(stored.sessions ?? {}).length, 1);
+  } finally {
+    await fs.rm(sessionStore, { force: true });
+    restoreEnv("ANONYMOUS_SESSION_STORE_FILE", previousSessionStore);
+    restoreEnv("DATABASE_URL", previousDatabaseUrl);
+  }
 }
 
 function verifyReadmeSanitizer() {
@@ -1083,17 +1547,24 @@ async function verifyStudyPlanBackgroundJobs() {
   const previousPlanStore = process.env.DETAILED_STUDY_PLAN_STORE_FILE;
   const previousDatabaseUrl = process.env.DATABASE_URL;
   const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY;
+  const previousSessionStore = process.env.ANONYMOUS_SESSION_STORE_FILE;
   const suffix = `${process.pid}-${Date.now()}`;
   const jobStore = path.join(os.tmpdir(), `learning-radar-study-jobs-${suffix}.json`);
   const planStore = path.join(os.tmpdir(), `learning-radar-study-plans-${suffix}.json`);
+  const sessionStore = path.join(os.tmpdir(), `learning-radar-study-sessions-${suffix}.json`);
   process.env.JOB_RUN_STORE_FILE = jobStore;
   process.env.DETAILED_STUDY_PLAN_STORE_FILE = planStore;
+  process.env.ANONYMOUS_SESSION_STORE_FILE = sessionStore;
   delete process.env.DATABASE_URL;
   delete process.env.DEEPSEEK_API_KEY;
 
   const recommendation = getRecommendations(defaultPreference)[0];
+  const ownerToken = createAnonymousSessionToken();
+  const otherToken = createAnonymousSessionToken();
+  const ownerUserId = deriveAnonymousUserId(ownerToken);
+  assert.ok(ownerUserId);
   const payloadBase = {
-    userId: "verify-study-user",
+    userId: ownerUserId,
     owner: recommendation.repo.owner,
     repo: recommendation.repo.name,
     repoFullName: recommendation.repo.fullName,
@@ -1103,6 +1574,13 @@ async function verifyStudyPlanBackgroundJobs() {
   let initialCalls = 0;
 
   try {
+    const sessions = await import("../lib/anonymous-session-store");
+    const registeredAt = new Date();
+    const expiresAt = new Date(registeredAt.getTime() + anonymousSessionMaxAgeSeconds * 1_000);
+    const otherUserId = deriveAnonymousUserId(otherToken);
+    assert.ok(otherUserId);
+    await sessions.registerAnonymousSession(ownerUserId, expiresAt, registeredAt);
+    await sessions.registerAnonymousSession(otherUserId, expiresAt, registeredAt);
     const concurrent = await Promise.all([
       enqueueDetailedStudyPlanJob({ ...payloadBase, duration: 7 }),
       enqueueDetailedStudyPlanJob({ ...payloadBase, duration: 14 })
@@ -1110,6 +1588,28 @@ async function verifyStudyPlanBackgroundJobs() {
     assert.equal(concurrent.filter((item) => item.created).length, 1);
     assert.equal(concurrent[0].job.runId, concurrent[1].job.runId);
     assert.equal(initialCalls, 0, "Enqueue must return before the slow generator starts.");
+
+    const { GET: getJobStatus } = await import("../app/api/jobs/[runId]/route");
+    const routeContext = { params: Promise.resolve({ runId: concurrent[0].job.runId }) };
+    const noSessionResponse = await getJobStatus(
+      new Request(`http://localhost/api/jobs/${encodeURIComponent(concurrent[0].job.runId)}`),
+      routeContext
+    );
+    assert.equal(noSessionResponse.status, 404);
+    const otherSessionResponse = await getJobStatus(
+      new Request(`http://localhost/api/jobs/${encodeURIComponent(concurrent[0].job.runId)}`, {
+        headers: { Cookie: `${anonymousSessionCookieName}=${otherToken}` }
+      }),
+      routeContext
+    );
+    assert.equal(otherSessionResponse.status, 404);
+    const ownerSessionResponse = await getJobStatus(
+      new Request(`http://localhost/api/jobs/${encodeURIComponent(concurrent[0].job.runId)}`, {
+        headers: { Cookie: `${anonymousSessionCookieName}=${ownerToken}` }
+      }),
+      routeContext
+    );
+    assert.equal(ownerSessionResponse.status, 200);
 
     const executed = await executeDetailedStudyPlanJob(concurrent[0].job.runId, {
       loadRecommendation: async () => recommendation,
@@ -1154,10 +1654,12 @@ async function verifyStudyPlanBackgroundJobs() {
   } finally {
     await fs.rm(jobStore, { force: true });
     await fs.rm(planStore, { force: true });
+    await fs.rm(sessionStore, { force: true });
     restoreEnv("JOB_RUN_STORE_FILE", previousJobStore);
     restoreEnv("DETAILED_STUDY_PLAN_STORE_FILE", previousPlanStore);
     restoreEnv("DATABASE_URL", previousDatabaseUrl);
     restoreEnv("DEEPSEEK_API_KEY", previousDeepSeekKey);
+    restoreEnv("ANONYMOUS_SESSION_STORE_FILE", previousSessionStore);
   }
 }
 
@@ -1205,12 +1707,49 @@ async function verifyDetailedPlanFocusMode() {
   );
   assert.ok(completeRuleMarkup.includes("临时规则方案"));
   assert.ok(completeRuleMarkup.includes("完整方案"));
-  assert.ok(completeRuleMarkup.includes("重新智能生成"));
+  assert.ok(completeRuleMarkup.includes("已有方案可用"));
   assert.ok(completeRuleMarkup.includes("一次生成完整方案"));
   assert.ok(completeRuleMarkup.includes("3 天"));
   assert.ok(completeRuleMarkup.includes("7 天"));
   assert.ok(completeRuleMarkup.includes("14 天"));
   assert.ok(completeRuleMarkup.includes("术语白话解释"));
+
+  const showcaseMarkup = renderToStaticMarkup(
+    createElement(DetailedStudyPlanBuilder, {
+      owner: recommendation.repo.owner,
+      repo: recommendation.repo.name,
+      projectName: recommendation.repo.fullName,
+      language: recommendation.repo.primaryLanguage,
+      cloneGoal: recommendation.analysis.miniCloneScope.goal,
+      learnerLevel: defaultPreference.level,
+      learnerGoal: defaultPreference.goal,
+      initialPlans: [plan],
+      showcaseMode: true
+    })
+  );
+  assert.ok(showcaseMarkup.includes("作品集预置体验"));
+  assert.ok(showcaseMarkup.includes("不会现场调用 DeepSeek"));
+  assert.ok(showcaseMarkup.includes("不会产生模型费用"));
+  assert.ok(showcaseMarkup.includes("预置演示方案"));
+  assert.equal(showcaseMarkup.includes("开始后台生成"), false);
+  assert.equal(showcaseMarkup.includes("重新生成"), false);
+
+  const emptyShowcaseMarkup = renderToStaticMarkup(
+    createElement(DetailedStudyPlanBuilder, {
+      owner: recommendation.repo.owner,
+      repo: recommendation.repo.name,
+      projectName: recommendation.repo.fullName,
+      language: recommendation.repo.primaryLanguage,
+      cloneGoal: recommendation.analysis.miniCloneScope.goal,
+      learnerLevel: defaultPreference.level,
+      learnerGoal: defaultPreference.goal,
+      initialPlans: [],
+      showcaseMode: true
+    })
+  );
+  assert.ok(emptyShowcaseMarkup.includes("公开演示方案正在准备中"));
+  assert.equal(emptyShowcaseMarkup.includes("未生成"), false);
+  assert.equal(emptyShowcaseMarkup.includes("作品集版不生成"), false);
 
   const builderSource = await fs.readFile(
     path.join(process.cwd(), "components", "detailed-study-plan-builder.tsx"),
@@ -1497,6 +2036,119 @@ async function verifyStudyPlanRequestValidation() {
 
   assert.equal(response.status, 400);
   assert.equal(payload.status, "error");
+}
+
+async function verifyShowcaseCostFirewall() {
+  const previous = {
+    nodeEnv: process.env.NODE_ENV,
+    deploymentMode: process.env.APP_DEPLOYMENT_MODE,
+    databaseUrl: process.env.DATABASE_URL,
+    jobRunStoreFile: process.env.JOB_RUN_STORE_FILE
+  };
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "learning-radar-showcase-"));
+  const jobRunStoreFile = path.join(temporaryDirectory, "job-runs.json");
+  (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+  process.env.APP_DEPLOYMENT_MODE = "showcase";
+  delete process.env.DATABASE_URL;
+  process.env.JOB_RUN_STORE_FILE = jobRunStoreFile;
+
+  try {
+    const studyPlanResponse = await createStudyPlan(
+      new Request("http://localhost/api/study-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "demo", repo: "demo", duration: 3 })
+      })
+    );
+    assert.equal(studyPlanResponse.status, 403);
+    assert.equal((await studyPlanResponse.json() as { code?: string }).code, "showcase_read_only");
+
+    const { DELETE: cancelStudyPlan } = await import("../app/api/study-plans/route");
+    const cancelResponse = await cancelStudyPlan(
+      new Request("http://localhost/api/study-plans", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: "must-not-be-read" })
+      })
+    );
+    assert.equal(cancelResponse.status, 403);
+
+    const { POST: refreshRadar } = await import("../app/api/radar/refresh/route");
+    const refreshResponse = await refreshRadar();
+    assert.equal(refreshResponse.status, 403);
+    assert.equal((await refreshResponse.json() as { code?: string }).code, "showcase_read_only");
+
+    const { GET: runCron } = await import("../app/api/cron/daily-radar/route");
+    const cronResponse = await runCron(new Request("http://localhost/api/cron/daily-radar?force=1"));
+    assert.equal(cronResponse.status, 403);
+
+    await assert.rejects(
+      () => enqueueDetailedStudyPlanJob({
+        userId: "showcase-user",
+        owner: "demo",
+        repo: "demo",
+        repoFullName: "demo/demo",
+        duration: 3,
+        force: false,
+        preference: { level: "beginner", goal: "portfolio" }
+      }),
+      /showcase forbids detailed study plan job creation/
+    );
+    await assert.rejects(
+      () => cancelDetailedStudyPlanJob("must-not-be-read", "showcase-user"),
+      /showcase forbids detailed study plan job cancellation/
+    );
+    const { enqueueDailyRadarJob } = await import("../lib/radar-jobs");
+    await assert.rejects(
+      () => enqueueDailyRadarJob({ trigger: "manual" }),
+      /showcase forbids daily radar job creation/
+    );
+    await assert.rejects(() => fs.access(jobRunStoreFile));
+  } finally {
+    restoreEnv("NODE_ENV", previous.nodeEnv);
+    restoreEnv("APP_DEPLOYMENT_MODE", previous.deploymentMode);
+    restoreEnv("DATABASE_URL", previous.databaseUrl);
+    restoreEnv("JOB_RUN_STORE_FILE", previous.jobRunStoreFile);
+    await fs.rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+async function verifyAnonymousForceBoundary() {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousDeploymentMode = process.env.APP_DEPLOYMENT_MODE;
+  const previousAdminSecret = process.env.ADMIN_SECRET;
+  (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+  process.env.APP_DEPLOYMENT_MODE = "full";
+  process.env.ADMIN_SECRET = "verification-admin-secret-000000000000000";
+
+  try {
+    const response = await createStudyPlan(
+      new Request("http://localhost/api/study-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "demo", repo: "demo", duration: 3, force: true })
+      })
+    );
+    const payload = await response.json() as { code?: string };
+    assert.equal(response.status, 401);
+    assert.equal(payload.code, "forced_generation_forbidden");
+
+    (process.env as Record<string, string | undefined>).NODE_ENV = "development";
+    delete process.env.ADMIN_SECRET;
+    const developmentResponse = await createStudyPlan(
+      new Request("http://localhost/api/study-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "demo", repo: "demo", duration: 3, force: true })
+      })
+    );
+    assert.equal(developmentResponse.status, 503);
+    assert.equal((await developmentResponse.json() as { code?: string }).code, "forced_generation_forbidden");
+  } finally {
+    restoreEnv("NODE_ENV", previousNodeEnv);
+    restoreEnv("APP_DEPLOYMENT_MODE", previousDeploymentMode);
+    restoreEnv("ADMIN_SECRET", previousAdminSecret);
+  }
 }
 
 async function verifyRequestRateLimit() {
@@ -1937,6 +2589,13 @@ async function verifyPersistentJobRuns() {
     assert.equal(waitingRetry.stage, "retry-queued");
     assert.equal(waitingRetry.errorCategory, "application_server");
     assert.equal(waitingRetry.availableAt, "2030-01-04T00:00:06.000Z");
+    const delayedQueueHealth = await jobs.getJobQueueHealth(
+      "daily-radar",
+      new Date("2030-01-04T00:00:05.000Z")
+    );
+    assert.equal(delayedQueueHealth.queued, 1);
+    assert.equal(delayedQueueHealth.readyQueued, 0);
+    assert.equal(delayedQueueHealth.oldestQueuedAt, null);
     assert.equal(
       await jobs.markJobRunRunning(
         retryJob.job.runId,
@@ -2007,6 +2666,12 @@ async function verifyPersistentJobRuns() {
     assert.equal(payload.job?.stage, "ai-analysis");
     assert.equal(payload.job?.errorSummary, "provider rejected [redacted]");
     assert.equal("payload" in (payload.job ?? {}), false);
+
+    const malformedRunIdResponse = await getJobStatus(
+      new Request("http://localhost/api/jobs/%"),
+      { params: Promise.resolve({ runId: "%" }) }
+    );
+    assert.equal(malformedRunIdResponse.status, 400);
   } finally {
     await fs.rm(temporaryFile, { force: true });
     restoreEnv("JOB_RUN_STORE_FILE", previousJobStoreFile);
@@ -2020,19 +2685,22 @@ async function verifyHealthEndpoint() {
   const payload = (await response.json()) as {
     status?: string;
     storage?: string;
-    taskQueue?: { queued?: number; running?: number; staleRunning?: number };
-    studyPlanQueue?: { queued?: number; running?: number; staleRunning?: number };
+    taskQueue?: { queued?: number; readyQueued?: number; running?: number; staleRunning?: number };
+    studyPlanQueue?: { queued?: number; readyQueued?: number; running?: number; staleRunning?: number };
+    degradedReasons?: string[];
   };
 
   assert.equal(response.status, 200);
   assert.equal(payload.status, "ok");
   assert.equal(payload.storage, "local-json");
   assert.equal(payload.taskQueue?.queued, 0);
+  assert.equal(payload.taskQueue?.readyQueued, 0);
   assert.equal(payload.taskQueue?.running, 0);
   assert.equal(payload.taskQueue?.staleRunning, 0);
   assert.equal(payload.studyPlanQueue?.queued, 0);
   assert.equal(payload.studyPlanQueue?.running, 0);
   assert.equal(payload.studyPlanQueue?.staleRunning, 0);
+  assert.deepEqual(payload.degradedReasons, []);
 }
 
 async function verifyCandidateStore() {

@@ -1,4 +1,5 @@
 import { redactOperationalError } from "@/lib/api-security";
+import { assertBackgroundJobsEnabled } from "@/lib/deployment-mode";
 import { runDailyRadar, type DailyRadarRunOptions } from "@/lib/daily-radar";
 import {
   createDailyRadarIdempotencyKey,
@@ -22,6 +23,7 @@ export async function enqueueDailyRadarJob(input: {
   force?: boolean;
   now?: Date;
 }) {
+  assertBackgroundJobsEnabled("daily radar job creation");
   const now = input.now ?? new Date();
   return createOrReuseJobRun(
     {
@@ -41,6 +43,7 @@ export async function executeDailyRadarJob(
   runId: string,
   options: { runner?: DailyRadarRunner; heartbeatIntervalMs?: number; now?: Date } = {}
 ): Promise<JobRun> {
+  assertBackgroundJobsEnabled("daily radar job execution");
   const claimed = await markJobRunRunning(runId, "load-preferences", options.now);
   if (!claimed) {
     const existing = await getJobRun(runId);
@@ -55,6 +58,7 @@ export async function executeClaimedDailyRadarJob(
   claimed: JobRun,
   options: { runner?: DailyRadarRunner; heartbeatIntervalMs?: number; now?: Date } = {}
 ): Promise<JobRun> {
+  assertBackgroundJobsEnabled("daily radar job execution");
   if (claimed.jobName !== dailyRadarJobName || claimed.status !== "running") {
     throw new Error(`Radar job ${claimed.runId} must be claimed before execution.`);
   }
@@ -108,6 +112,7 @@ export async function executeClaimedDailyRadarJob(
 }
 
 export function scheduleLocalRadarJob(runId: string) {
+  assertBackgroundJobsEnabled("local daily radar job execution");
   if (process.env.NODE_ENV === "production" || process.env.RADAR_DISABLE_LOCAL_JOB_AUTOSTART === "1") {
     return false;
   }

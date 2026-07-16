@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeAdminRequest, redactOperationalError } from "@/lib/api-security";
+import { isShowcaseMode, showcaseReadOnlyError } from "@/lib/deployment-mode";
 import { getJobRun, listJobRuns } from "@/lib/job-runs";
 import {
   dailyRadarJobName,
@@ -66,6 +67,13 @@ export async function GET(request = new Request("http://localhost/api/radar/refr
 }
 
 export async function POST(request = new Request("http://localhost/api/radar/refresh", { method: "POST" })) {
+  if (isShowcaseMode()) {
+    return NextResponse.json(showcaseReadOnlyError, {
+      status: 403,
+      headers: { "Cache-Control": "no-store" }
+    });
+  }
+
   const authorization = authorizeAdminRequest(request);
   if (!authorization.authorized) {
     return NextResponse.json(

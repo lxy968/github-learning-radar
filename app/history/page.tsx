@@ -24,7 +24,7 @@ export default async function HistoryPage() {
             <Panel key={run.runId} className="p-5">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={run.source === "github" ? "green" : "amber"}>{run.date}</Badge>
-                <Badge>{run.source}</Badge>
+                <Badge>{formatHistorySource(run.source)}</Badge>
                 <span className="text-sm text-slate-600">
                   {run.recommendationCount} 个推荐，{run.rawCandidateCount} 个候选
                 </span>
@@ -56,8 +56,10 @@ export default async function HistoryPage() {
         ) : (
           <Panel className="p-5">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="amber">Seed</Badge>
-              <span className="text-sm text-slate-600">{seedItems.length} 个项目，等待第一次每日任务运行</span>
+              <Badge tone="amber">种子快照</Badge>
+              <span className="text-sm text-slate-600">
+                {seedItems.length} 个内置演示项目，不代表当天热度；等待第一次 GitHub 任务运行
+              </span>
             </div>
             <div className="mt-4 grid gap-2 text-sm text-slate-700">
               {seedItems.slice(0, 5).map((item) => (
@@ -72,4 +74,8 @@ export default async function HistoryPage() {
       </div>
     </AppShell>
   );
+}
+
+function formatHistorySource(source: "seed" | "github") {
+  return source === "github" ? "GitHub 抓取" : "种子快照";
 }

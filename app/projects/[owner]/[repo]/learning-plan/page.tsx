@@ -8,6 +8,7 @@ import { listCurrentDetailedStudyPlans } from "@/lib/detailed-study-plans";
 import { getCurrentRecommendation, getLearningRecommendation } from "@/lib/radar";
 import { getCurrentAnonymousUserId } from "@/lib/anonymous-session";
 import { getUserPreference } from "@/lib/preferences";
+import { getDeploymentMode } from "@/lib/deployment-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,7 @@ export default async function DetailedLearningPlanPage({
   params: Promise<{ owner: string; repo: string }>;
 }) {
   const { owner, repo } = await params;
+  const deploymentMode = getDeploymentMode();
   const userId = await getCurrentAnonymousUserId();
   const preference = await getUserPreference(userId);
   const currentRecommendation = await getCurrentRecommendation(owner, repo);
@@ -33,7 +35,11 @@ export default async function DetailedLearningPlanPage({
       <PageHeader
         eyebrow="Detailed learning plan"
         title={`${recommendation.repo.fullName} 具体学习方案`}
-        description="按需生成仓库专属的操作步骤；每一步都有依据、验证方法和交付物，完成后点亮圆圈。"
+        description={deploymentMode === "showcase"
+          ? plans.length > 0
+            ? "选择已预置的学习周期开始体验；每一步都有依据、验证方法和交付物，公开站不会现场调用 DeepSeek。"
+            : "这个项目的公开演示方案还在准备中；公开站不会现场调用 DeepSeek，也不会创建付费任务。"
+          : "按需生成仓库专属的操作步骤；每一步都有依据、验证方法和交付物，完成后点亮圆圈。"}
         actions={
           <>
             <Link
@@ -66,6 +72,7 @@ export default async function DetailedLearningPlanPage({
           learnerLevel={preference.level}
           learnerGoal={preference.goal}
           initialPlans={plans}
+          showcaseMode={deploymentMode === "showcase"}
         />
       </div>
     </AppShell>

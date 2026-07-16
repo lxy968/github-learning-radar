@@ -1,4 +1,5 @@
 import { claimNextJobRun, recoverStaleJobRuns } from "@/lib/job-runs";
+import { assertBackgroundJobsEnabled } from "@/lib/deployment-mode";
 import {
   detailedStudyPlanJobName,
   executeDetailedStudyPlanJob
@@ -9,6 +10,7 @@ type ExecutionOptions = NonNullable<Parameters<typeof executeDetailedStudyPlanJo
 export async function runStudyPlanWorkerOnce(
   options: ExecutionOptions & { now?: Date; staleAfterMs?: number } = {}
 ) {
+  assertBackgroundJobsEnabled("detailed study plan worker polling");
   const now = options.now ?? new Date();
   const staleAfterMs = Math.max(5 * 60_000, Math.round(options.staleAfterMs ?? 10 * 60_000));
   const recovery = await recoverStaleJobRuns({

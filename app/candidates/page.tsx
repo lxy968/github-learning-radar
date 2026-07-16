@@ -32,10 +32,14 @@ export default async function CandidatesPage({
     <AppShell>
       <PageHeader
         eyebrow="Candidate pool"
-        title="GitHub 候选项目"
-        description="这里展示 GitHub discovery 抓到但不一定进入最终雷达的仓库，可以搜索、筛选并进入详情查看。"
+        title={source === "local" ? "GitHub 候选项目" : "GitHub 候选项目演示快照"}
+        description={source === "local"
+          ? "这里展示 GitHub discovery 抓到但不一定进入最终雷达的仓库，可以搜索、筛选并进入详情查看。"
+          : "这里展示用于体验搜索、筛选和详情流程的内置种子候选，不代表实时 GitHub discovery 结果。"}
         actions={
-          <Badge tone={source === "local" ? "green" : "amber"}>{candidateResult.sourceTotal} 个候选</Badge>
+          <Badge tone={source === "local" ? "green" : "amber"}>
+            {candidateResult.sourceTotal} 个{source === "local" ? "已抓取" : "演示"}候选
+          </Badge>
         }
       />
       <div className="grid gap-5 px-5 py-5 lg:px-8">

@@ -1,6 +1,7 @@
 import { analyzeRepositoryWithFallback } from "../lib/ai/analyze";
 import { generateDetailedStudyPlan } from "../lib/ai/detailed-study-plan";
 import { getConfiguredAiModel } from "../lib/ai/provider";
+import { isShowcaseMode } from "../lib/deployment-mode";
 import { createDetailedStudyPlanGenerationContext } from "../lib/detailed-study-plan-cache";
 import { getCurrentRecommendation } from "../lib/radar";
 import { scoreRepository } from "../lib/scoring";
@@ -16,6 +17,10 @@ main().catch((error) => {
 });
 
 async function main() {
+  if (isShowcaseMode()) {
+    throw new Error("AI smoke is disabled while APP_DEPLOYMENT_MODE=showcase.");
+  }
+
   if (process.argv.includes("--study-plan")) {
     await smokeStudyPlan();
     return;

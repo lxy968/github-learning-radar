@@ -1,6 +1,8 @@
 allowBuilds:
   esbuild: true
   sharp: true
+overrides:
+  next>postcss: 8.5.16
 onlyBuiltDependencies:
   - esbuild
   - sharp

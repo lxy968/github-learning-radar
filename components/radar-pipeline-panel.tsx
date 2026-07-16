@@ -18,7 +18,9 @@ export function RadarPipelinePanel({ candidateCount, source }: { candidateCount:
             当前展示 {candidateCount} 个{source === "local" ? "已抓取" : "种子"}候选；候选不等于最终推荐。
           </p>
         </div>
-        <Badge tone={source === "local" ? "green" : "amber"}>{source === "local" ? "本地候选库" : "Seed fallback"}</Badge>
+        <Badge tone={source === "local" ? "green" : "amber"}>
+          {source === "local" ? "已抓取候选库" : "内置演示候选快照"}
+        </Badge>
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-4">
         {stages.map(([step, title, description]) => (

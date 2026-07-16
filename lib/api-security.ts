@@ -15,8 +15,11 @@ export type RateLimitResult = {
 
 const localRateBuckets = new Map<string, LocalRateBucket>();
 
-export function authorizeAdminRequest(request: Request) {
-  if (process.env.NODE_ENV !== "production") {
+export function authorizeAdminRequest(
+  request: Request,
+  options: { allowDevelopmentBypass?: boolean } = {}
+) {
+  if (process.env.NODE_ENV !== "production" && options.allowDevelopmentBypass !== false) {
     return { authorized: true as const, status: 200, code: "development-bypass" };
   }
 

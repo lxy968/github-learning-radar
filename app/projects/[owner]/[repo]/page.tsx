@@ -11,6 +11,7 @@ import { getCurrentRecommendation } from "@/lib/radar";
 import { sanitizeReadmeExcerpt } from "@/lib/readme";
 import { uniqueTextValues } from "@/lib/text-lists";
 import { formatDate, formatNumber } from "@/lib/utils";
+import { isShowcaseMode } from "@/lib/deployment-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,7 @@ export default async function ProjectPage({
   params: Promise<{ owner: string; repo: string }>;
 }) {
   const { owner, repo } = await params;
+  const showcaseMode = isShowcaseMode();
   const item = await getCurrentRecommendation(owner, repo);
 
   if (!item) notFound();
@@ -44,7 +46,7 @@ export default async function ProjectPage({
               href="/"
               className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              <ArrowLeft size={15} />
+              <ArrowLeft size={15} aria-hidden="true" />
               返回雷达
             </Link>
             <a
@@ -53,7 +55,7 @@ export default async function ProjectPage({
               rel="noreferrer"
               className="focus-ring inline-flex h-9 items-center gap-2 rounded-md bg-teal-700 px-3 text-sm font-medium text-white hover:bg-teal-800"
             >
-              <ArrowUpRight size={15} />
+              <ArrowUpRight size={15} aria-hidden="true" />
               GitHub
             </a>
           </>
@@ -61,7 +63,7 @@ export default async function ProjectPage({
       />
 
       <div className="grid gap-5 px-5 py-5 lg:grid-cols-[1fr_340px] lg:px-8">
-        <main className="grid gap-5">
+        <div className="grid gap-5">
           <Panel className="p-5">
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="green">雷达分 {score.finalScore}</Badge>
@@ -121,25 +123,28 @@ export default async function ProjectPage({
             <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
               <div className="max-w-2xl">
                 <div className="flex items-center gap-2 text-teal-700">
-                  <Sparkles size={17} />
-                  <span className="text-xs font-semibold uppercase tracking-wide">按需生成</span>
+                  <Sparkles size={17} aria-hidden="true" />
+                  <span className="text-xs font-semibold uppercase tracking-wide">{showcaseMode ? "公开预置体验" : "按需生成"}</span>
                 </div>
-                <h2 className="mt-2 text-base font-semibold text-slate-950">生成仓库专属的具体学习方案</h2>
+                <h2 className="mt-2 text-base font-semibold text-slate-950">
+                  {showcaseMode ? "查看仓库专属的预置学习方案" : "生成仓库专属的具体学习方案"}
+                </h2>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  选择 3、7 或 14 天路线后，再根据 README、技术栈和仓库文件生成具体操作、验证标准与交付物。
-                  只分析当前项目，生成结果会缓存，重新打开不会重复消耗 AI Token。
+                  {showcaseMode
+                    ? "公开站提前准备学习步骤，不会现场调用 DeepSeek。你可以查看方案、勾选步骤并刷新确认进度。"
+                    : "选择 3、7 或 14 天路线后，再根据 README、技术栈和仓库文件生成具体操作、验证标准与交付物。只分析当前项目，生成结果会缓存，重新打开不会重复消耗 AI Token。"}
                 </p>
               </div>
               <Link
                 href={learningPlanHref}
                 className="focus-ring inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-4 text-sm font-medium text-white transition hover:border-teal-800 hover:bg-teal-800"
               >
-                生成具体学习方案
-                <ArrowRight size={16} />
+                {showcaseMode ? "查看预置学习方案" : "生成具体学习方案"}
+                <ArrowRight size={16} aria-hidden="true" />
               </Link>
             </div>
           </Panel>
-        </main>
+        </div>
 
         <aside className="grid content-start gap-4">
           <Panel className="p-5">
@@ -215,7 +220,7 @@ function Metric({
 }) {
   return (
     <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-      <Icon size={16} className="text-teal-700" />
+      <Icon size={16} className="text-teal-700" aria-hidden="true" />
       <div className="mt-2 text-lg font-semibold text-slate-950">{value}</div>
       <div className="text-xs text-slate-500">{label}</div>
     </div>

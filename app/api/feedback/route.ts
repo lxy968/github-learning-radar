@@ -8,9 +8,10 @@ import type { FeedbackEvent } from "@/lib/types";
 const feedbackSchema = z.object({
   repoId: z.number().int().positive(),
   eventType: z.enum(["want_to_learn", "bookmarked", "skipped", "too_hard", "too_easy"]),
-  value: z.boolean(),
-  payload: z.record(z.string(), z.unknown()).optional()
-});
+  value: z.boolean()
+}).strict();
+
+const maxFeedbackBodyBytes = 2_048;
 
 export async function GET(request: Request) {
   const session = await resolveAnonymousSession(request);
@@ -50,12 +51,11 @@ export async function POST(request: Request) {
   const session = await resolveAnonymousSession(request);
   if (!session) return sessionRequired();
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Request body must be JSON" }, { status: 400 });
+  const bodyResult = await readBoundedJson(request);
+  if (!bodyResult.ok) {
+    return NextResponse.json({ error: bodyResult.error }, { status: bodyResult.status });
   }
+  const body = bodyResult.value;
   const parsed = feedbackSchema.safeParse(body);
 
   if (!parsed.success) {
@@ -77,8 +77,61 @@ export async function POST(request: Request) {
 }
 
 function toPublicEvent(event: FeedbackEvent) {
-  const { userId: _userId, ...publicEvent } = event;
-  return publicEvent;
+  return {
+    id: event.id,
+    repoId: event.repoId,
+    eventType: event.eventType,
+    value: event.value,
+    createdAt: event.createdAt
+  };
+}
+
+async function readBoundedJson(request: Request): Promise<
+  | { ok: true; value: unknown }
+  | { ok: false; status: number; error: string }
+> {
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() ?? "";
+  if (contentType !== "application/json") {
+    return { ok: false, status: 415, error: "Content-Type must be application/json" };
+  }
+
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxFeedbackBodyBytes) {
+    return { ok: false, status: 413, error: "Feedback payload is too large" };
+  }
+  if (!request.body) return { ok: false, status: 400, error: "Request body must be JSON" };
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxFeedbackBodyBytes) {
+        await reader.cancel().catch(() => undefined);
+        return { ok: false, status: 413, error: "Feedback payload is too large" };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { ok: false, status: 400, error: "Unable to read feedback request body" };
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  try {
+    return { ok: true, value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) };
+  } catch {
+    return { ok: false, status: 400, error: "Request body must be valid UTF-8 JSON" };
+  }
 }
 
 function sessionRequired() {

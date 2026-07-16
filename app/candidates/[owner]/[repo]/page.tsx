@@ -12,6 +12,7 @@ import { formatNumber } from "@/lib/utils";
 import { getRepoSignal } from "@/lib/repository-signals";
 import { RepositorySignalBadge } from "@/components/repository-signal-badge";
 import { sanitizeReadmeExcerpt } from "@/lib/readme";
+import { isShowcaseMode } from "@/lib/deployment-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,7 @@ export default async function CandidateDetailPage({
   params: Promise<{ owner: string; repo: string }>;
 }) {
   const { owner, repo } = await params;
+  const showcaseMode = isShowcaseMode();
   const fullName = `${owner}/${repo}`.toLowerCase();
   const [storedCandidate, recommendation] = await Promise.all([
     getRepositoryCandidate(owner, repo),
@@ -43,7 +45,7 @@ export default async function CandidateDetailPage({
               href="/candidates"
               className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              <ArrowLeft size={15} /> 返回候选池
+              <ArrowLeft size={15} aria-hidden="true" /> 返回候选池
             </Link>
             <a
               href={candidate.url}
@@ -51,14 +53,14 @@ export default async function CandidateDetailPage({
               rel="noreferrer"
               className="focus-ring inline-flex h-9 items-center gap-2 rounded-md bg-teal-700 px-3 text-sm font-medium text-white hover:bg-teal-800"
             >
-              <ArrowUpRight size={15} /> GitHub
+              <ArrowUpRight size={15} aria-hidden="true" /> GitHub
             </a>
           </>
         }
       />
 
       <div className="grid gap-5 px-5 py-5 lg:grid-cols-[1fr_320px] lg:px-8">
-        <main className="grid gap-5">
+        <div className="grid gap-5">
           <Panel className="p-5">
             <div className="flex flex-wrap gap-2">
               <Badge tone="blue">{candidate.category}</Badge>
@@ -88,7 +90,7 @@ export default async function CandidateDetailPage({
               <SignalList title="语言" items={candidate.languages.map((item) => item.name)} empty={signalEmptyText(getRepoSignal(candidate, "languages"), "语言统计")} />
             </div>
           </Panel>
-        </main>
+        </div>
 
         <aside className="grid content-start gap-4">
           <Panel className="p-5">
@@ -103,7 +105,11 @@ export default async function CandidateDetailPage({
 
           <Panel className="p-5">
             <h2 className="text-sm font-semibold text-slate-950">具体学习方案</h2>
-            {recommendation ? (
+            {showcaseMode ? (
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                公开站只展示提前准备好的学习方案，不会现场调用 DeepSeek；未预置的项目会如实标记为“准备中”。
+              </p>
+            ) : recommendation ? (
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 这个项目已经进入今日推荐，生成时会结合现有结构化分析、README 和工程信号。
               </p>
@@ -116,9 +122,13 @@ export default async function CandidateDetailPage({
               href={`/projects/${encodeURIComponent(candidate.owner)}/${encodeURIComponent(candidate.name)}/learning-plan`}
               className="focus-ring mt-4 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-md bg-teal-700 px-3 text-sm font-semibold text-white hover:bg-teal-800"
             >
-              生成具体学习方案 <ArrowRight size={15} />
+              {showcaseMode ? "查看预置学习方案" : "生成具体学习方案"} <ArrowRight size={15} aria-hidden="true" />
             </Link>
-            <p className="mt-2 text-xs leading-5 text-slate-500">打开方案页不会调用模型，点击生成后才会创建后台任务。</p>
+            <p className="mt-2 text-xs leading-5 text-slate-500">
+              {showcaseMode
+                ? "你可以浏览已有方案并记录进度；没有预置内容时不会创建后台任务。"
+                : "打开方案页不会调用模型，点击生成后才会创建后台任务。"}
+            </p>
           </Panel>
         </aside>
       </div>
@@ -140,7 +150,7 @@ function SignalList({ title, items, empty }: { title: string; items: string[]; e
 function Metric({ icon: Icon, label, value }: { icon: typeof Star; label: string; value: string }) {
   return (
     <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-      <Icon size={16} className="text-teal-700" />
+      <Icon size={16} className="text-teal-700" aria-hidden="true" />
       <div className="mt-2 text-lg font-semibold text-slate-950">{value}</div>
       <div className="text-xs text-slate-500">{label}</div>
     </div>

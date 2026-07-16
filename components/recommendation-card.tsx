@@ -9,10 +9,12 @@ import type { RadarRecommendation } from "@/lib/types";
 
 export function RecommendationCard({
   item,
-  hasStudyPlan = false
+  hasStudyPlan = false,
+  rankingLabel = "今日"
 }: {
   item: RadarRecommendation;
   hasStudyPlan?: boolean;
+  rankingLabel?: "今日" | "演示";
 }) {
   const { repo, score, analysis, rank } = item;
   const [owner, name] = repo.fullName.split("/");
@@ -27,7 +29,7 @@ export function RecommendationCard({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="green">今日 #{rank}</Badge>
+            <Badge tone="green">{rankingLabel} #{rank}</Badge>
             <Badge tone={analysis.difficulty === "advanced" ? "amber" : "blue"}>
               {difficultyLabel(analysis.difficulty)}
             </Badge>
@@ -50,11 +52,11 @@ export function RecommendationCard({
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{projectSummary(item)}</p>
         </div>
         <div className="flex shrink-0 items-center gap-4 text-xs font-medium text-slate-500 sm:pt-1">
-          <span className="inline-flex items-center gap-1.5">
-            <Star size={14} /> {formatNumber(repo.stars)}
+          <span className="inline-flex items-center gap-1.5" aria-label={`${formatNumber(repo.stars)} 个 Star`}>
+            <Star size={14} aria-hidden="true" /> {formatNumber(repo.stars)}
           </span>
-          <span className="inline-flex items-center gap-1.5">
-            <GitFork size={14} /> {formatNumber(repo.forks)}
+          <span className="inline-flex items-center gap-1.5" aria-label={`${formatNumber(repo.forks)} 个 Fork`}>
+            <GitFork size={14} aria-hidden="true" /> {formatNumber(repo.forks)}
           </span>
         </div>
       </div>
@@ -76,7 +78,7 @@ export function RecommendationCard({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs font-semibold text-slate-500">Mini 复刻重点</div>
             <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500">
-              <Clock3 size={13} /> {effortLabel(analysis.difficulty)}
+              <Clock3 size={13} aria-hidden="true" /> {effortLabel(analysis.difficulty)}
             </span>
           </div>
           <p className="mt-2 text-sm font-medium leading-6 text-slate-800">{analysis.miniCloneScope.goal}</p>
@@ -99,7 +101,7 @@ export function RecommendationCard({
             className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-4 text-sm font-semibold !text-white transition hover:border-teal-800 hover:bg-teal-800 hover:!text-white"
           >
             {hasStudyPlan ? "继续学习" : "开始学习"}
-            <ArrowRight size={15} />
+            <ArrowRight size={15} aria-hidden="true" />
           </Link>
           <Link
             href={projectHref}
@@ -113,7 +115,7 @@ export function RecommendationCard({
             rel="noreferrer"
             className="focus-ring inline-flex min-h-10 items-center justify-center gap-1.5 px-2 text-sm font-medium text-slate-500 transition hover:text-slate-800"
           >
-            GitHub <ArrowUpRight size={14} />
+            GitHub <ArrowUpRight size={14} aria-hidden="true" />
           </a>
         </div>
         <FeedbackControls repoId={repo.id} />

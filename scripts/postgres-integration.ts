@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRuleBasedDetailedStudyPlan } from "../lib/ai/detailed-study-plan";
 import { closeSqlClient, getSqlClient } from "../lib/db/client";
+import { cleanupExpiredAnonymousUserData } from "../lib/user-data";
 import { getOrCreateDetailedStudyPlan } from "../lib/detailed-study-plans";
 import { claimNextJobRun, createOrReuseJobRun, finishJobRun } from "../lib/job-runs";
 import { saveRadarRun } from "../lib/radar-runs";
@@ -11,6 +14,10 @@ import { defaultPreference, seedRepos } from "../lib/seed-data";
 import type { RadarRecommendation, RadarRun } from "../lib/types";
 import { loadLocalEnv } from "./load-local-env";
 import { assertPostgresIntegrationTarget } from "./postgres-integration-safety";
+import {
+  calculateMigrationChecksum,
+  migrationAdvisoryLockName
+} from "./migration-integrity";
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
   loadLocalEnv(".env.local");
@@ -29,17 +36,114 @@ async function main() {
   const runId = `integration-radar-${suffix}`;
   const jobRunId = `integration-job-${suffix}`;
   const jobName = `integration-job-${suffix}`;
+  const expiredSessionId = `anon_${createHash("sha256").update(`expired-${suffix}`).digest("hex")}`;
+  const renewedSessionId = `anon_${createHash("sha256").update(`renewed-${suffix}`).digest("hex")}`;
+  const legacySessionId = `legacy-integration-${suffix}`;
   let planId: string | null = null;
   let schemaReady = false;
 
   try {
     const migrationRows = await sql`
-      SELECT version FROM schema_migrations
+      SELECT version, checksum FROM schema_migrations
       WHERE version = '0014_study_plan_job_serialization.sql'
       LIMIT 1
     `;
     assert.equal(migrationRows.length, 1, "Run pnpm db:migrate before the PostgreSQL integration test.");
+    const migrationContents = await fs.readFile(
+      path.join(process.cwd(), "migrations", "0014_study_plan_job_serialization.sql"),
+      "utf8"
+    );
+    assert.equal(
+      String(migrationRows[0].checksum),
+      calculateMigrationChecksum(migrationContents),
+      "Applied migration checksum does not match the repository migration."
+    );
     schemaReady = true;
+
+    const reserved = await sql.reserve();
+    await reserved`SELECT pg_advisory_lock(hashtext(${migrationAdvisoryLockName}))`;
+    try {
+      const lockAttempt = await sql`
+        SELECT pg_try_advisory_lock(hashtext(${migrationAdvisoryLockName})) AS acquired
+      `;
+      if (lockAttempt[0]?.acquired === true) {
+        await sql`SELECT pg_advisory_unlock(hashtext(${migrationAdvisoryLockName}))`;
+      }
+      assert.equal(lockAttempt[0]?.acquired, false, "Migration advisory lock did not serialize competing sessions.");
+    } finally {
+      await reserved`SELECT pg_advisory_unlock(hashtext(${migrationAdvisoryLockName}))`;
+      reserved.release();
+    }
+
+    const sessionCutoff = new Date();
+    const expiredAt = new Date(sessionCutoff.getTime() - 60_000).toISOString();
+    const renewedUntil = new Date(sessionCutoff.getTime() + 60 * 60_000).toISOString();
+    await sql`
+      INSERT INTO anonymous_sessions (user_id, created_at, last_seen_at, expires_at)
+      VALUES
+        (${expiredSessionId}, ${expiredAt}, ${expiredAt}, ${expiredAt}),
+        (${renewedSessionId}, ${expiredAt}, ${expiredAt}, ${expiredAt}),
+        (${legacySessionId}, ${expiredAt}, ${expiredAt}, ${expiredAt})
+    `;
+    await sql`
+      INSERT INTO learning_progress (user_id, plan_id, step_id, completed, client_updated_at)
+      VALUES (${expiredSessionId}, ${`integration-expired-${suffix}`}, 'step-1', TRUE, ${expiredAt})
+    `;
+    await sql`
+      INSERT INTO user_preferences (user_id, interests, languages, level, goal, updated_at)
+      VALUES (${expiredSessionId}, '[]'::jsonb, '[]'::jsonb, 'intermediate', 'clone', ${expiredAt})
+    `;
+    await sql`
+      INSERT INTO repo_interactions (user_id, repo_id, bookmarked, updated_at)
+      VALUES (${expiredSessionId}, 42, TRUE, ${expiredAt})
+    `;
+    await sql`
+      INSERT INTO feedback_events (event_id, user_id, repo_id, event_type, value, payload, created_at)
+      VALUES (${`integration-feedback-${suffix}`}, ${expiredSessionId}, 42, 'bookmarked', TRUE, '{}'::jsonb, ${expiredAt})
+    `;
+
+    let signalLocked: () => void = () => undefined;
+    let releaseLock: () => void = () => undefined;
+    const locked = new Promise<void>((resolve) => { signalLocked = resolve; });
+    const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const renewal = sql.begin(async (transaction) => {
+      await transaction`SELECT user_id FROM anonymous_sessions WHERE user_id = ${renewedSessionId} FOR UPDATE`;
+      signalLocked();
+      await release;
+      await transaction`
+        UPDATE anonymous_sessions
+        SET last_seen_at = ${sessionCutoff.toISOString()}, expires_at = ${renewedUntil}
+        WHERE user_id = ${renewedSessionId}
+      `;
+    });
+    await locked;
+    let cleanup: Awaited<ReturnType<typeof cleanupExpiredAnonymousUserData>>;
+    try {
+      cleanup = await cleanupExpiredAnonymousUserData(sessionCutoff, 100, 1);
+    } finally {
+      releaseLock();
+    }
+    await renewal;
+    assert.equal(cleanup.storage, "postgres");
+    assert.equal(cleanup.deletedUserIds.includes(expiredSessionId), true);
+    assert.equal(cleanup.deletedUserIds.includes(renewedSessionId), false);
+    const sessionRows = await sql`
+      SELECT user_id FROM anonymous_sessions
+      WHERE user_id IN (${renewedSessionId}, ${legacySessionId})
+      ORDER BY user_id
+    `;
+    assert.deepEqual(new Set(sessionRows.map((row) => String(row.user_id))), new Set([renewedSessionId, legacySessionId]));
+    const childCounts = await sql`
+      SELECT
+        (SELECT COUNT(*) FROM learning_progress WHERE user_id = ${expiredSessionId}) AS progress_count,
+        (SELECT COUNT(*) FROM user_preferences WHERE user_id = ${expiredSessionId}) AS preference_count,
+        (SELECT COUNT(*) FROM repo_interactions WHERE user_id = ${expiredSessionId}) AS interaction_count,
+        (SELECT COUNT(*) FROM feedback_events WHERE user_id = ${expiredSessionId}) AS feedback_count
+    `;
+    assert.equal(Number(childCounts[0].progress_count), 0);
+    assert.equal(Number(childCounts[0].preference_count), 0);
+    assert.equal(Number(childCounts[0].interaction_count), 0);
+    assert.equal(Number(childCounts[0].feedback_count), 0);
 
     const baseRepo = seedRepos[0];
     const repository = {
@@ -147,6 +251,10 @@ async function main() {
         await transaction`DELETE FROM radar_run_archives WHERE run_id = ${runId}`;
         await transaction`DELETE FROM radar_runs WHERE run_id = ${runId}`;
         await transaction`DELETE FROM job_runs WHERE run_id = ${jobRunId}`;
+        await transaction`
+          DELETE FROM anonymous_sessions
+          WHERE user_id IN (${expiredSessionId}, ${renewedSessionId}, ${legacySessionId})
+        `;
         const repositoryRows = await transaction`SELECT id FROM repositories WHERE github_id = ${githubId}`;
         const repositoryIds = repositoryRows.map((row) => Number(row.id));
         if (repositoryIds.length > 0) {

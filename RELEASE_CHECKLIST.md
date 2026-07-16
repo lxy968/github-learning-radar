@@ -8,8 +8,11 @@
 - [ ] `git status --short` 只包含预期变更。
 - [ ] `.env.local`、`.data`、`.next`、`.pnpm-store` 和构建日志未被跟踪。
 - [ ] `pnpm release:check` 通过。
+- [ ] `pnpm history:secrets` 对完整 Git 历史通过，输出中没有敏感值。
+- [ ] `pnpm audit:prod` 无中危、高危或严重生产依赖漏洞。
 - [ ] `pnpm regression:http` 在生产构建启动后通过。
 - [ ] 360/390、768、1280/1440px 浏览器回归和键盘检查完成（路线图 6.4）。
+- [ ] 部署当天重新核对 Vercel Hobby 与 Neon Free 官方额度；不绑卡、不升级付费、不启用按量计费。
 
 ## GitHub 仓库设置
 
@@ -21,6 +24,9 @@
 
 ## 数据库与部署
 
+- [ ] Neon Web 使用池化 URL，Migration 使用直连 URL；两者都包含 `sslmode=require`，且没有写入仓库或日志。
+- [ ] Vercel 只配置 showcase 所需的五个 Production 变量，未配置 GitHub/DeepSeek/OpenAI/Admin/Cron Secret。
+- [ ] Vercel 版本化 `vercel.json` 的 Web 生产预检通过，并只构建 Production 分支。
 - [ ] 生产 PostgreSQL 已备份。
 - [ ] Web、Worker、Migration 三个 `production:check` profile 分别通过，警告已人工确认。
 - [ ] Web 未注入 `GITHUB_TOKEN`，Worker 未注入管理员/Cron/SITE 密钥，Migration 只持有数据库配置。

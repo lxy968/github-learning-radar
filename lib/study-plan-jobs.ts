@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { generateDetailedStudyPlan } from "@/lib/ai/detailed-study-plan";
 import { redactOperationalError } from "@/lib/api-security";
+import { assertBackgroundJobsEnabled } from "@/lib/deployment-mode";
 import {
   getCachedDetailedStudyPlan,
   getOrCreateDetailedStudyPlan
@@ -39,6 +40,7 @@ type StudyPlanJobPayload = {
 
 type InitialGenerator = NonNullable<Parameters<typeof getOrCreateDetailedStudyPlan>[2]["generate"]>;
 export async function enqueueDetailedStudyPlanJob(input: StudyPlanJobPayload) {
+  assertBackgroundJobsEnabled("detailed study plan job creation");
   return withEnqueueLock(input.userId, async () => {
     const active = await findActiveJobRunForUser(detailedStudyPlanJobName, input.userId);
     if (active) return { job: active, created: false };
@@ -75,6 +77,7 @@ export async function executeDetailedStudyPlanJob(
     claimedJob?: JobRun;
   } = {}
 ): Promise<JobRun> {
+  assertBackgroundJobsEnabled("detailed study plan job execution");
   const claimed = options.claimedJob ?? await markJobRunRunning(runId, "prepare-study-plan", options.now);
   if (!claimed) {
     const existing = await getJobRun(runId);
@@ -155,6 +158,7 @@ export async function executeDetailedStudyPlanJob(
 }
 
 export function scheduleLocalDetailedStudyPlanJob(runId: string) {
+  assertBackgroundJobsEnabled("local detailed study plan job execution");
   if (process.env.NODE_ENV === "production" || process.env.STUDY_PLAN_DISABLE_LOCAL_JOB_AUTOSTART === "1") {
     return false;
   }
@@ -168,6 +172,7 @@ export function scheduleLocalDetailedStudyPlanJob(runId: string) {
 }
 
 export async function cancelDetailedStudyPlanJob(runId: string, userId: string) {
+  assertBackgroundJobsEnabled("detailed study plan job cancellation");
   const job = await getJobRun(runId);
   if (!job || job.jobName !== detailedStudyPlanJobName || job.payload.userId !== userId) return null;
   if (job.status === "running") return job;

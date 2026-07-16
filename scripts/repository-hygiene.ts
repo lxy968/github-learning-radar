@@ -22,6 +22,7 @@ const requiredFiles = [
   "RELEASE_CHECKLIST.md",
   "RELEASE_READINESS.md",
   "Dockerfile",
+  "vercel.json",
   ".dockerignore",
   "compose.integration.yml",
   ".env.example",
@@ -36,6 +37,7 @@ const requiredFiles = [
   ".github/ISSUE_TEMPLATE/feature_request.yml",
   "public/.gitkeep",
   "scripts/prepare-standalone.mjs",
+  "scripts/git-history-secret-scan.ts",
   "scripts/postgres-integration-safety.ts",
   "scripts/postgres-integration.ts",
   "scripts/production-check.mjs"
@@ -107,6 +109,7 @@ async function main() {
   await verifyRequiredFiles();
   await verifyGitignore();
   await verifyContainerArtifacts();
+  await verifyVercelDeploymentConfig();
   await verifyEnvironmentExample();
   await verifyPackageMetadata();
   await scanRepositoryText();
@@ -189,6 +192,15 @@ async function verifyContainerArtifacts() {
   }
 }
 
+async function verifyVercelDeploymentConfig() {
+  try {
+    const config = JSON.parse(await readText("vercel.json")) as unknown;
+    for (const issue of findVercelDeploymentConfigIssues(config)) errors.push(`vercel.json: ${issue}`);
+  } catch {
+    errors.push("vercel.json is not valid JSON.");
+  }
+}
+
 async function verifyEnvironmentExample() {
   const content = await readText(".env.example");
   const values = new Map<string, string>();
@@ -207,6 +219,9 @@ async function verifyEnvironmentExample() {
     else if (values.get(key)?.trim()) errors.push(`.env.example must not contain a value for ${key}.`);
   }
   if (!values.has("SITE_URL")) errors.push(".env.example is missing SITE_URL.");
+  if (values.get("APP_DEPLOYMENT_MODE") !== "showcase") {
+    errors.push(".env.example must default APP_DEPLOYMENT_MODE to the fail-closed showcase mode.");
+  }
   if (values.has("NEXT_PUBLIC_SITE_URL")) errors.push("Use runtime SITE_URL instead of build-time NEXT_PUBLIC_SITE_URL.");
 }
 
@@ -243,6 +258,8 @@ async function verifyPackageMetadata() {
       "start",
       "start:regression",
       "repo:hygiene",
+      "history:secrets",
+      "audit:prod",
       "release:check",
       "production:check",
       "typecheck",
@@ -317,6 +334,8 @@ function verifyWorkflows() {
     "actions/setup-node@v6",
     "pnpm install --frozen-lockfile",
     "pnpm repo:hygiene -- --strict",
+    "pnpm history:secrets",
+    "pnpm audit:prod",
     "pnpm typecheck",
     "pnpm verify",
     "pnpm production:check -- --profile=web",
@@ -438,4 +457,21 @@ export function findPotentialSecrets(content: string) {
     findings.push({ label, index: match.index });
   }
   return findings;
+}
+
+export function findVercelDeploymentConfigIssues(value: unknown) {
+  const issues: string[] = [];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return ["configuration must be an object."];
+
+  const config = value as Record<string, unknown>;
+  if (config.framework !== "nextjs") issues.push("framework must remain nextjs.");
+  if (config.buildCommand !== "pnpm production:check -- --profile=web && pnpm build") {
+    issues.push("buildCommand must run the Web production preflight before the production build.");
+  }
+  for (const forbiddenField of ["env", "build.env", "crons"]) {
+    if (forbiddenField in config) {
+      issues.push(`${forbiddenField} must not be committed; configure runtime values in Vercel and keep showcase cron-free.`);
+    }
+  }
+  return issues;
 }

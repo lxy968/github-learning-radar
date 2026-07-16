@@ -14,6 +14,7 @@ import type {
   RadarRecommendation,
   UserPreference
 } from "@/lib/types";
+import { listShowcaseStudyPlans } from "@/lib/showcase-study-plans";
 
 type DetailedStudyPlanStore = {
   plans: DetailedStudyPlan[];
@@ -150,7 +151,20 @@ export async function listCurrentDetailedStudyPlans(
   );
   const repositoryIds = new Set(recommendations.map((recommendation) => recommendation.repo.id));
   const plans = await listDetailedStudyPlans();
-  return plans.filter((plan) => repositoryIds.has(plan.repoId) && Boolean(plan.cache?.key && expectedKeys.has(plan.cache.key)));
+  const currentStoredPlans = plans.filter(
+    (plan) => repositoryIds.has(plan.repoId) && Boolean(plan.cache?.key && expectedKeys.has(plan.cache.key))
+  );
+  return mergePlans(listShowcaseStudyPlans(recommendations, preference), currentStoredPlans);
+}
+
+function mergePlans(preferred: DetailedStudyPlan[], stored: DetailedStudyPlan[]) {
+  const seen = new Set<string>();
+  return [...preferred, ...stored].filter((plan) => {
+    const identity = plan.cache?.key ?? plan.id;
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
 }
 
 async function saveDetailedStudyPlan(plan: DetailedStudyPlan) {

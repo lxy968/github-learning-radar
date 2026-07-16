@@ -14,7 +14,45 @@ type LocalSessionStore = {
   sessions: Record<string, AnonymousSessionRecord>;
 };
 
+type ExpiredSessionCleanupOptions = {
+  now?: Date;
+  limit?: number;
+  beforeLocalDelete?: (userId: string) => Promise<void>;
+};
+
 let mutationQueue = Promise.resolve();
+
+export async function registerAnonymousSession(userId: string, expiresAt: Date, now = new Date()) {
+  assertAnonymousUserId(userId);
+  const sql = getSqlClient();
+  const timestamp = now.toISOString();
+  const expiration = expiresAt.toISOString();
+
+  if (sql) {
+    const rows = await sql`
+      INSERT INTO anonymous_sessions (user_id, created_at, last_seen_at, expires_at)
+      VALUES (${userId}, ${timestamp}, ${timestamp}, ${expiration})
+      ON CONFLICT (user_id) DO UPDATE SET
+        last_seen_at = EXCLUDED.last_seen_at,
+        expires_at = EXCLUDED.expires_at
+      WHERE anonymous_sessions.expires_at > ${timestamp}
+      RETURNING user_id
+    `;
+    return rows.length === 1;
+  }
+
+  return mutateLocalStore((store) => {
+    const existing = store.sessions[userId];
+    if (existing && existing.expiresAt <= timestamp) return false;
+    store.sessions[userId] = {
+      userId,
+      createdAt: existing?.createdAt ?? timestamp,
+      lastSeenAt: timestamp,
+      expiresAt: expiration
+    };
+    return true;
+  });
+}
 
 export async function touchAnonymousSession(userId: string, expiresAt: Date, now = new Date()) {
   assertAnonymousUserId(userId);
@@ -23,24 +61,20 @@ export async function touchAnonymousSession(userId: string, expiresAt: Date, now
   const expiration = expiresAt.toISOString();
 
   if (sql) {
-    await sql`
-      INSERT INTO anonymous_sessions (user_id, created_at, last_seen_at, expires_at)
-      VALUES (${userId}, ${timestamp}, ${timestamp}, ${expiration})
-      ON CONFLICT (user_id) DO UPDATE SET
-        last_seen_at = EXCLUDED.last_seen_at,
-        expires_at = GREATEST(anonymous_sessions.expires_at, EXCLUDED.expires_at)
+    const rows = await sql`
+      UPDATE anonymous_sessions
+      SET last_seen_at = ${timestamp}, expires_at = ${expiration}
+      WHERE user_id = ${userId} AND expires_at > ${timestamp}
+      RETURNING user_id
     `;
-    return;
+    return rows.length === 1;
   }
 
-  await mutateLocalStore((store) => {
+  return mutateLocalStore((store) => {
     const existing = store.sessions[userId];
-    store.sessions[userId] = {
-      userId,
-      createdAt: existing?.createdAt ?? timestamp,
-      lastSeenAt: timestamp,
-      expiresAt: existing && existing.expiresAt > expiration ? existing.expiresAt : expiration
-    };
+    if (!existing || existing.expiresAt <= timestamp) return false;
+    store.sessions[userId] = { ...existing, lastSeenAt: timestamp, expiresAt: expiration };
+    return true;
   });
 }
 
@@ -58,6 +92,54 @@ export async function deleteAnonymousSession(userId: string) {
   });
 }
 
+export async function deleteExpiredAnonymousSessions({
+  now = new Date(),
+  limit = 100,
+  beforeLocalDelete
+}: ExpiredSessionCleanupOptions = {}) {
+  const sql = getSqlClient();
+  const cutoff = now.toISOString();
+  const batchSize = Math.max(1, Math.min(1_000, Math.trunc(limit)));
+
+  if (sql) {
+    const rows = await sql`
+      WITH expired AS (
+        SELECT user_id
+        FROM anonymous_sessions
+        WHERE expires_at <= ${cutoff}
+          AND user_id ~ '^anon_[0-9a-f]{64}$'
+        ORDER BY expires_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${batchSize}
+      )
+      DELETE FROM anonymous_sessions
+      USING expired
+      WHERE anonymous_sessions.user_id = expired.user_id
+        AND anonymous_sessions.expires_at <= ${cutoff}
+      RETURNING anonymous_sessions.user_id
+    `;
+    return {
+      storage: "postgres" as const,
+      deletedUserIds: rows.map((row) => String(row.user_id))
+    };
+  }
+
+  return mutateLocalStore(async (store) => {
+    const deletedUserIds = Object.values(store.sessions)
+      .filter((session) => session.expiresAt <= cutoff)
+      .sort((left, right) => left.expiresAt.localeCompare(right.expiresAt))
+      .slice(0, batchSize)
+      .map((session) => session.userId);
+
+    for (const expiredUserId of deletedUserIds) {
+      await beforeLocalDelete?.(expiredUserId);
+      delete store.sessions[expiredUserId];
+    }
+
+    return { storage: "local-json" as const, deletedUserIds };
+  });
+}
+
 function assertAnonymousUserId(userId: string) {
   if (!/^anon_[a-f0-9]{64}$/.test(userId)) throw new Error("Invalid anonymous user id.");
 }
@@ -72,7 +154,7 @@ async function readLocalStore(): Promise<LocalSessionStore> {
   }
 }
 
-async function mutateLocalStore(mutate: (store: LocalSessionStore) => void) {
+async function mutateLocalStore<T>(mutate: (store: LocalSessionStore) => T | Promise<T>) {
   const previous = mutationQueue;
   let release: () => void = () => undefined;
   mutationQueue = new Promise<void>((resolve) => {
@@ -82,13 +164,14 @@ async function mutateLocalStore(mutate: (store: LocalSessionStore) => void) {
 
   try {
     const store = await readLocalStore();
-    mutate(store);
+    const result = await mutate(store);
     const sessionsFile = getSessionsFile();
     const directory = path.dirname(sessionsFile);
     const temporaryFile = `${sessionsFile}.${randomUUID()}.tmp`;
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(temporaryFile, `${JSON.stringify(store, null, 2)}\n`, "utf8");
     await fs.rename(temporaryFile, sessionsFile);
+    return result;
   } finally {
     release();
   }

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { consumeGlobalRateLimit, consumeRequestRateLimit } from "@/lib/api-security";
+import { authorizeAdminRequest, consumeGlobalRateLimit, consumeRequestRateLimit } from "@/lib/api-security";
+import { isShowcaseMode, showcaseReadOnlyError } from "@/lib/deployment-mode";
+import { listShowcaseStudyPlans } from "@/lib/showcase-study-plans";
 import {
   getCachedDetailedStudyPlan,
   listDetailedStudyPlans
@@ -46,9 +48,13 @@ export async function GET(request: Request) {
     if (!recommendation) {
       return NextResponse.json({ status: "error", message: "候选项目中没有找到这个仓库。" }, { status: 404 });
     }
-    const plans = filterDetailedStudyPlansForActiveProfile(
+    const showcasePlans = listShowcaseStudyPlans([recommendation], preference);
+    const storedPlans = filterDetailedStudyPlansForActiveProfile(
       await listDetailedStudyPlans(recommendation.repo.id),
       preference
+    );
+    const plans = [...showcasePlans, ...storedPlans].filter(
+      (plan, index, all) => all.findIndex((candidate) => candidate.cache?.key === plan.cache?.key) === index
     );
     const activeJob = await findActiveJobRunForUser(detailedStudyPlanJobName, session.userId);
     return NextResponse.json(
@@ -71,6 +77,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (isShowcaseMode()) return showcaseReadOnlyResponse();
+
   const input = await readRequestBody(request);
   if (!input) return NextResponse.json({ status: "error", message: "请求体必须是 JSON 对象。" }, { status: 400 });
 
@@ -83,6 +91,20 @@ export async function POST(request: Request) {
       { status: "error", message: "owner、repo 和 duration（3、7、14）都是必填项。" },
       { status: 400 }
     );
+  }
+
+  if (force) {
+    const authorization = authorizeAdminRequest(request, { allowDevelopmentBypass: false });
+    if (!authorization.authorized) {
+      return NextResponse.json(
+        {
+          status: "error",
+          code: "forced_generation_forbidden",
+          message: "强制重新生成只允许自部署站点的管理员调用，匿名访客只能复用已有方案。"
+        },
+        { status: authorization.status }
+      );
+    }
   }
 
   const session = await resolveAnonymousSession(request);
@@ -150,6 +172,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  if (isShowcaseMode()) return showcaseReadOnlyResponse();
+
   const session = await resolveAnonymousSession(request);
   if (!session) return sessionRequired();
   const input = await readRequestBody(request);
@@ -163,6 +187,13 @@ export async function DELETE(request: Request) {
     status: "success",
     message: job.status === "cancelled" ? "任务已停止。" : "任务已经开始一次性生成，不能中途停止。",
     job: toPublicStudyPlanJob(job)
+  });
+}
+
+function showcaseReadOnlyResponse() {
+  return NextResponse.json(showcaseReadOnlyError, {
+    status: 403,
+    headers: { "Cache-Control": "no-store" }
   });
 }
 
