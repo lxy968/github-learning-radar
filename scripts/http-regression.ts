@@ -135,12 +135,21 @@ async function main() {
         duration: number;
         generationStatus?: string;
         providerAttempts?: unknown[];
+        provider?: string;
+        modelId?: string;
+        cache?: unknown;
         days: Array<{ steps: Array<{ id: string }> }>;
       }>;
     };
-    const showcasePlan = firstPlansPayload.plans?.find((plan) => plan.duration === 3);
+    const showcasePlans = firstPlansPayload.plans ?? [];
+    const showcasePlan = showcasePlans.find((plan) => plan.duration === 3);
     assert.equal(firstPlansPayload.status, "success");
     assert.equal(firstPlansPayload.job, null);
+    assert.deepEqual(showcasePlans.map((plan) => plan.duration).sort((left, right) => left - right), [3, 7, 14]);
+    assert.deepEqual(showcasePlans.map((plan) => plan.days.length).sort((left, right) => left - right), [3, 7, 14]);
+    assert.ok(showcasePlans.every((plan) => plan.generationStatus === "complete"));
+    assert.ok(showcasePlans.every((plan) => plan.providerAttempts?.length === 0));
+    assert.ok(showcasePlans.every((plan) => plan.provider === undefined && plan.modelId === undefined && plan.cache === undefined));
     assert.equal(showcasePlan?.id, "showcase-hermes-agent-3-v1");
     assert.equal(showcasePlan?.generationStatus, "complete");
     assert.equal(showcasePlan?.days.length, 3);
@@ -167,7 +176,10 @@ async function main() {
       { headers: { Cookie: home.cookiePair }, cache: "no-store" }
     );
     const repeatedPlansPayload = await repeatedPlansResponse.json() as typeof firstPlansPayload;
-    assert.equal(repeatedPlansPayload.plans?.find((plan) => plan.duration === 3)?.id, showcasePlan?.id);
+    assert.deepEqual(
+      repeatedPlansPayload.plans?.map((plan) => plan.id),
+      showcasePlans.map((plan) => plan.id)
+    );
 
     const restoredProgress = await fetch(
       `${baseUrl}/api/progress?planId=${encodeURIComponent(progressPlanId)}`,

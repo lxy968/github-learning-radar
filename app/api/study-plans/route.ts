@@ -53,9 +53,13 @@ export async function GET(request: Request) {
       await listDetailedStudyPlans(recommendation.repo.id),
       preference
     );
-    const plans = [...showcasePlans, ...storedPlans].filter(
-      (plan, index, all) => all.findIndex((candidate) => candidate.cache?.key === plan.cache?.key) === index
-    );
+    const seenPlanIds = new Set<string>();
+    const plans = [...showcasePlans, ...storedPlans].filter((plan) => {
+      const identity = plan.cache?.key ?? plan.id;
+      if (seenPlanIds.has(identity)) return false;
+      seenPlanIds.add(identity);
+      return true;
+    });
     const activeJob = await findActiveJobRunForUser(detailedStudyPlanJobName, session.userId);
     return NextResponse.json(
       {
