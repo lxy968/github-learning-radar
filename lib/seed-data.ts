@@ -1,3 +1,4 @@
+import { showcaseRecommendation } from "@/lib/showcase-content";
 import type { RepoAnalysis, RepoSnapshot, UserPreference } from "@/lib/types";
 
 export const defaultPreference: UserPreference = {
@@ -9,6 +10,7 @@ export const defaultPreference: UserPreference = {
 };
 
 const seedRepoFixtures: RepoSnapshot[] = [
+  showcaseRecommendation.repo,
   {
     id: 92001,
     fullName: "modelcontextprotocol/inspector",
@@ -224,6 +226,7 @@ export const seedRepos: RepoSnapshot[] = seedRepoFixtures.map((repo) => ({
 }));
 
 export const seedAnalyses: RepoAnalysis[] = [
+  showcaseRecommendation.analysis,
   {
     repoId: 92001,
     projectType: "AI developer tool",

@@ -15,6 +15,9 @@ concurrency:
 
 jobs:
   trigger-daily-radar:
+    # The public showcase does not run paid/background jobs. Fork owners must
+    # explicitly set the repository variable ENABLE_DAILY_RADAR=true.
+    if: ${{ vars.ENABLE_DAILY_RADAR == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Trigger deployed radar cron

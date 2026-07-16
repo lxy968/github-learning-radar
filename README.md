@@ -8,6 +8,8 @@
 
 计划公开地址：[lxy968/github-learning-radar](https://github.com/lxy968/github-learning-radar)。当前仓库尚未完成公开发布门禁；实际切换为 Public 后，首页才会显示该链接。线上作品集采用零 DeepSeek Key 的 showcase 模式，已选定 Vercel Hobby + Neon Free 的零付费组合，实际 Demo URL 只会在部署和线上验收成功后补入。具体步骤见 [DEPLOYMENT.md](./DEPLOYMENT.md#本项目的零付费-showcase-方案)。
 
+本项目是独立的开源学习工具，与 GitHub, Inc. 无隶属、授权或背书关系。GitHub 是其各自所有者的商标。
+
 ## 架构
 
 ```mermaid
@@ -109,7 +111,7 @@ Compose 使用临时本地账号，`pnpm db:integration` 还要求显式的 `ALL
 
 数据保留命令默认只输出 dry-run 报告；核对后使用 `pnpm data:retention -- --apply --confirm=delete-expired-data` 才会归档/清理。默认周期、保护条件和本地运行要求见 [DATA_RETENTION.md](./DATA_RETENTION.md)。
 
-Git 初始化后，发布前运行 `pnpm release:check`。完整的 GitHub 设置、数据库、外部服务和发布后检查见 [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)。
+Git 初始化后，发布前运行 `pnpm release:check`。该命令会使用隔离的临时数据启动生产构建并完成 HTTP 回归，不会读取或修改本机 `.data`。完整的 GitHub 设置、数据库、外部服务和发布后检查见 [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)。
 
 本地服务启动后可另开终端运行真实 HTTP 路由回归：
 
@@ -140,6 +142,7 @@ curl -H "Authorization: Bearer $CRON_SECRET" \
 
 - `RADAR_CRON_URL`: 例如 `https://your-app.vercel.app/api/cron/daily-radar`
 - `CRON_SECRET`: 与部署环境中的 `CRON_SECRET` 保持一致
+- 仓库变量 `ENABLE_DAILY_RADAR=true`：只有 full 自部署者明确设置后，定时任务才会运行；公开 showcase 保持未设置
 
 前端按钮不直接调用 cron 入口，而是调用 `POST /api/radar/refresh`。该接口不向浏览器暴露 `CRON_SECRET`，并在生产环境提供 5 分钟手动刷新冷却。手动入口和 Cron 都只创建或复用持久化任务并返回 `202 Accepted`；浏览器随后按 `runId` 查询阶段、进度和终态。
 
@@ -215,7 +218,7 @@ full 是“部署者承担生成费用”的完整实例，不是本项目维护
 - 已提供隔离 PostgreSQL 集成脚本与 CI 容器任务；当前工作区没有 Docker/psql，尚未取得本机真实 PostgreSQL 运行证据。
 - 真实浏览器的多尺寸截图、键盘顺序和屏幕阅读器回归仍是发布门禁；HTTP 回归不能替代它。
 - 公共雷达结果全站共享，匿名用户偏好主要用于重新排序和学习方案画像。
-- showcase 的服务端零入队边界和内置 3 天完整方案已经完成本地验证；全新匿名会话可以记录步骤并从服务端恢复进度。真实在线作品集仍需取得托管 PostgreSQL、HTTPS 和发布前后 `job_runs`/provider 指标不变的预发布证据。
+- showcase 的服务端零入队边界，以及同一真实 DeepSeek 缓存生成的 3/7/14 天完整方案，已经完成本地验证；全新匿名会话可以记录步骤并从服务端恢复进度。公开页面不会现场调用模型，也不会下发内部模型 ID、调用轨迹或 Token 信息。真实在线作品集仍需取得托管 PostgreSQL、HTTPS 和发布前后 `job_runs`/provider 指标不变的预发布证据。
 - 本地 JSON 只支持单机开发；生产环境必须使用 PostgreSQL 并运行独立 Worker。
 - 没有正式账号和跨浏览器恢复能力；匿名 Cookie 丢失后无法找回原会话数据。
 - 首次公开版本使用带签发时间的 v1 匿名 Cookie；开发期旧格式 Cookie 会被重置，不迁移旧本地匿名偏好和进度。项目尚未公开上线，因此不存在需要迁移的线上匿名用户。

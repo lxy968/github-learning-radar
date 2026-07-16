@@ -13,6 +13,10 @@ export type RateLimitResult = {
   retryAfterSeconds: number;
 };
 
+export type BoundedJsonResult =
+  | { ok: true; value: unknown }
+  | { ok: false; status: number; error: string };
+
 const localRateBuckets = new Map<string, LocalRateBucket>();
 
 export function authorizeAdminRequest(
@@ -51,6 +55,57 @@ export async function consumeRequestRateLimit(
 
 export async function consumeGlobalRateLimit(scope: string, limit: number, windowMs: number) {
   return consumeRateLimit(`${scope}:global`, limit, windowMs);
+}
+
+export async function readBoundedJson(
+  request: Request,
+  options: { maxBytes: number; label?: string }
+): Promise<BoundedJsonResult> {
+  const label = options.label?.trim() || "Request";
+  const maxBytes = Math.max(256, Math.min(1_048_576, Math.trunc(options.maxBytes)));
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() ?? "";
+  if (contentType !== "application/json") {
+    return { ok: false, status: 415, error: "Content-Type must be application/json" };
+  }
+
+  const contentLength = request.headers.get("content-length");
+  const declaredLength = contentLength === null ? 0 : Number(contentLength);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    return { ok: false, status: 413, error: `${label} payload is too large` };
+  }
+  if (!request.body) return { ok: false, status: 400, error: "Request body must be JSON" };
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return { ok: false, status: 413, error: `${label} payload is too large` };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { ok: false, status: 400, error: `Unable to read ${label.toLowerCase()} request body` };
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  try {
+    return { ok: true, value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) };
+  } catch {
+    return { ok: false, status: 400, error: "Request body must be valid UTF-8 JSON" };
+  }
 }
 
 export function redactOperationalError(error: unknown, maxLength = 220) {
@@ -126,9 +181,10 @@ function toRateLimitResult(
 }
 
 function getRequestIdentity(request: Request) {
+  const vercelForwarded = request.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim();
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const realIp = request.headers.get("x-real-ip")?.trim();
-  return forwarded || realIp || "local-or-unknown";
+  return vercelForwarded || forwarded || realIp || "local-or-unknown";
 }
 
 function safeEqual(left: string, right: string) {

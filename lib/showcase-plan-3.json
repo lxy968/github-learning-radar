@@ -1,0 +1,208 @@
+{
+    "id":  "showcase-hermes-agent-3-v1",
+    "repoId":  1024554267,
+    "repoFullName":  "NousResearch/hermes-agent",
+    "duration":  3,
+    "source":  "ai",
+    "provider":  "deepseek",
+    "modelId":  "deepseek-v4-pro",
+    "providerAttempts":  [
+                             {
+                                 "provider":  "deepseek",
+                                 "modelId":  "deepseek-v4-pro",
+                                 "status":  "success",
+                                 "usage":  {
+                                               "inputTokens":  1507,
+                                               "outputTokens":  5646,
+                                               "totalTokens":  7153
+                                           }
+                             }
+                         ],
+    "cache":  {
+                  "key":  "showcase-hermes-agent-3-v1",
+                  "inputHash":  "29b2e34d066382fe5b3dc58aa6d2f0f584a01048089b012850335e123c19e9bf",
+                  "preferenceLevel":  "beginner",
+                  "preferenceGoal":  "portfolio",
+                  "promptVersion":  "detailed-plan-prompt-v5",
+                  "schemaVersion":  "detailed-plan-schema-v4",
+                  "provider":  "deepseek",
+                  "modelId":  "deepseek-v4-pro"
+              },
+    "basedOnPushedAt":  "2026-07-13T02:46:49Z",
+    "generatedAt":  "2026-07-13T14:42:43.939Z",
+    "summary":  "在3天内，你将搭建一个极简的自改进CLI代理，能够调用LLM回答问题、根据用户指令创建可复用的Python技能、并按对话轮次自动总结存储记忆。你将基于NousResearch/hermes-agent仓库，从环境配置开始，逐步实现核心闭环学习功能。",
+    "prerequisites":  [
+                          "已安装Git（用于克隆仓库）",
+                          "本地安装Python 3.10或更高版本",
+                          "拥有OpenAI、Anthropic或OpenRouter等兼容API的密钥",
+                          "基本的命令行操作能力（cd、ls、运行Python脚本）",
+                          "了解Python基础语法（变量、函数、文件读写）",
+                          "知道JSON格式（键值对、数组等）",
+                          "已安装文本编辑器（如VS Code、Vim）",
+                          "会使用pip安装Python包"
+                      ],
+    "glossary":  [
+                     {
+                         "term":  "LLM",
+                         "explanation":  "大语言模型，如GPT-4、Claude等，能理解并生成自然语言的AI模型"
+                     },
+                     {
+                         "term":  "API密钥",
+                         "explanation":  "一串由服务商提供的秘密字符，用于验证调用API的权限"
+                     },
+                     {
+                         "term":  "技能创建",
+                         "explanation":  "代理根据用户描述自动生成可重复执行的Python脚本，封装特定任务"
+                     },
+                     {
+                         "term":  "记忆nudge",
+                         "explanation":  "一种定时提醒机制，例如每10轮对话就让代理总结关键信息并存储到文件"
+                     },
+                     {
+                         "term":  "环境变量",
+                         "explanation":  "操作系统提供的配置值，程序可以读取它们来设定不同行为（如切换模型）"
+                     },
+                     {
+                         "term":  "CLI",
+                         "explanation":  "命令行界面，用户在终端输入文本命令与程序交互"
+                     }
+                 ],
+    "days":  [
+                 {
+                     "day":  1,
+                     "goal":  "搭建开发环境并验证LLM调用",
+                     "outcome":  "能够通过仓库自带的CLI发送消息并获得LLM回复",
+                     "steps":  [
+                                   {
+                                       "title":  "克隆仓库并安装依赖",
+                                       "purpose":  "获取项目源码并准备好Python运行环境",
+                                       "actions":  [
+                                                       "打开终端，执行 git clone https://github.com/NousResearch/hermes-agent",
+                                                       "进入项目目录 cd hermes-agent",
+                                                       "创建并激活Python虚拟环境：python -m venv venv 然后 source venv/bin/activate (Linux/Mac) 或 venv\\Scripts\\activate (Windows)",
+                                                       "根据README.md中的安装说明安装依赖（例如 pip install -e . ；若失败，则检查是否存在 requirements.txt 或 setup.py，按实际命令安装）"
+                                                   ],
+                                       "references":  [
+                                                          "README.md",
+                                                          ".env.example",
+                                                          "需要先确认：依赖配置文件（如 requirements.txt 或 setup.py）"
+                                                      ],
+                                       "verification":  "在虚拟环境中执行 python -c \u0027import hermes\u0027 不报错，或根据README中的验证步骤确认安装成功",
+                                       "deliverable":  "项目根目录下存在 venv 文件夹，且 hermes 包可被Python导入",
+                                       "estimatedMinutes":  60,
+                                       "id":  "day-1-step-1"
+                                   },
+                                   {
+                                       "title":  "配置API密钥并测试对话",
+                                       "purpose":  "设置LLM提供商认证信息，运行CLI完成一次对话交互",
+                                       "actions":  [
+                                                       "复制 .env.example 为 .env ：cp .env.example .env",
+                                                       "用文本编辑器打开 .env ，根据你使用的API提供商填写至少一个密钥（例如 OPENAI_API_KEY=sk-...）",
+                                                       "运行 python cli.py --help 查看可用的子命令",
+                                                       "根据帮助信息，选择一个对话类子命令（例如 chat 或 ask）发送测试消息，如 python cli.py chat --message \u0027你好\u0027"
+                                                   ],
+                                       "references":  [
+                                                          ".env.example",
+                                                          "cli.py"
+                                                      ],
+                                       "verification":  "控制台输出由LLM生成的自然语言回复，内容合理（例如问候或自我介绍）",
+                                       "deliverable":  ".env 文件已正确配置，并成功在终端看到至少一次LLM回复",
+                                       "estimatedMinutes":  45,
+                                       "id":  "day-1-step-2"
+                                   }
+                               ]
+                 },
+                 {
+                     "day":  2,
+                     "goal":  "实现核心对话循环与技能创建功能",
+                     "outcome":  "拥有一个自制的迷你代理脚本，能进行多轮对话并根据指令生成技能文件",
+                     "steps":  [
+                                   {
+                                       "title":  "提取LLM客户端并设计对话循环",
+                                       "purpose":  "从仓库中找到封装好的LLM调用组件，并构建一个基础的多轮对话程序",
+                                       "actions":  [
+                                                       "在Python交互环境中，导入 hermes 包并用 dir(hermes) 探索可用的子模块，找到负责LLM调用的类或函数（预期形如 hermes.llm.Client 或 hermes.get_client）",
+                                                       "创建新文件 my_agent.py，编写一个函数 get_llm_client()，利用找到的接口实例化一个LLM客户端（API密钥和初始设定从 .env 加载）",
+                                                       "在 my_agent.py 中添加一个简单的 while True 循环，读取用户输入，调用LLM客户端获得回复并打印，直到用户输入 \u0027exit\u0027",
+                                                       "运行 python my_agent.py，进行几轮对话，验证循环正常工作"
+                                                   ],
+                                       "references":  [
+                                                          "hermes_cli/ (目录)",
+                                                          ".env.example",
+                                                          "需要先确认：LLM客户端的具体导入路径（如 hermes.llm.Client）"
+                                                      ],
+                                       "verification":  "运行 my_agent.py 后，能连续与代理对话，输入 \u0027exit\u0027 可退出，且每次都能得到LLM回复",
+                                       "deliverable":  "项目根目录下新增 my_agent.py 文件，内含可运行的多轮对话循环",
+                                       "estimatedMinutes":  50,
+                                       "id":  "day-2-step-1"
+                                   },
+                                   {
+                                       "title":  "实现基于指令的技能创建",
+                                       "purpose":  "让代理能够将用户描述的任务自动保存为可复用的Python脚本",
+                                       "actions":  [
+                                                       "在 my_agent.py 中添加技能创建分支：当用户输入以 \u0027@skill \u0027 开头时，提取后面的任务描述",
+                                                       "编写函数 create_skill(description, llm_client)，调用LLM生成一段仅包含函数定义的Python代码（例如 def web_search(query): ...），不包含主逻辑",
+                                                       "将生成的代码保存到 skills/ 目录下，文件名为技能名.py（技能名由用户消息或LLM生成决定），并打印保存路径",
+                                                       "测试：在对话中输入 \u0027@skill 写一个计算两个数乘积的函数\u0027，检查 skills/ 目录下是否出现正确的Python文件"
+                                                   ],
+                                       "references":  [
+                                                          "my_agent.py (上一步创建的文件)",
+                                                          "agent/ (目录，可参考其结构)",
+                                                          "需要先确认：技能生成的提示词模板"
+                                                      ],
+                                       "verification":  "输入 @skill 描述后，skills/ 目录下新增一个语法正确的Python文件，且函数签名符合预期",
+                                       "deliverable":  "skills/ 目录下至少存在一个由代理自动生成的技能文件，my_agent.py 已集成技能创建逻辑",
+                                       "estimatedMinutes":  50,
+                                       "id":  "day-2-step-2"
+                                   }
+                               ]
+                 },
+                 {
+                     "day":  3,
+                     "goal":  "添加记忆nudge与多模型切换机制",
+                     "outcome":  "迷你代理具备定期总结存储记忆的能力，并可通过环境变量切换不同的LLM",
+                     "steps":  [
+                                   {
+                                       "title":  "实现对话轮次计数与周期性记忆总结",
+                                       "purpose":  "每累积10条用户消息时，让LLM总结最近的关键信息并存入JSON记忆文件",
+                                       "actions":  [
+                                                       "在 my_agent.py 的循环中添加全局计数器 message_count，每次用户有效输入后递增1",
+                                                       "编写函数 save_memory(summary_text)，将传入的文本以JSON格式追加到 memories.json 文件（结构如 {\u0027timestamp\u0027: ..., \u0027content\u0027: ...}）",
+                                                       "当 message_count % 10 == 0 时，用最近10轮对话作为上下文，请LLM生成一个简短的摘要，然后调用 save_memory",
+                                                       "运行代理并与代理持续对话，至少发送15条消息，确认 memories.json 中已出现第一条记忆记录"
+                                                   ],
+                                       "references":  [
+                                                          "my_agent.py",
+                                                          "memories.json (将由程序创建)",
+                                                          "hermes_state.py (可参考状态管理方式)"
+                                                      ],
+                                       "verification":  "在对话过程中，每10条消息后终端有提示“记忆已保存”，且 memories.json 中有对应的摘要文本",
+                                       "deliverable":  "memories.json 文件至少包含一条有效的记忆记录，my_agent.py 已集成记忆nudge逻辑",
+                                       "estimatedMinutes":  45,
+                                       "id":  "day-3-step-1"
+                                   },
+                                   {
+                                       "title":  "通过环境变量切换LLM模型",
+                                       "purpose":  "无须修改代码，仅更改 .env 中的配置即可使用不同的LLM提供商或模型名称",
+                                       "actions":  [
+                                                       "在 .env 中添加 MODEL_PROVIDER 和 MODEL_NAME 两个变量（例如 MODEL_PROVIDER=openai 和 MODEL_NAME=gpt-3.5-turbo）",
+                                                       "修改 my_agent.py 中 get_llm_client() 函数，读取这两个环境变量，并据此配置LLM客户端（例如切换 OpenAI 客户端或 Anthropic 客户端）",
+                                                       "重启代理，验证LLM响应行为符合所设模型特征（简单方法：可故意填错模型名看报错信息，或改用明显不同的模型观察回复风格变化）",
+                                                       "（可选）尝试将 MODEL_PROVIDER 改为 openrouter，并填入 OpenRouter 的密钥，确认代理仍能正常工作"
+                                                   ],
+                                       "references":  [
+                                                          ".env.example",
+                                                          "my_agent.py",
+                                                          "providers/ (目录，可寻找不同提供商的实例化代码)"
+                                                      ],
+                                       "verification":  "更改 .env 中的 MODEL_PROVIDER 和 MODEL_NAME 后，重启代理依然能获得LLM回复，且错误配置会提示原因",
+                                       "deliverable":  ".env 文件包含 MODEL_PROVIDER 和 MODEL_NAME 变量，my_agent.py 能根据它们切换模型",
+                                       "estimatedMinutes":  45,
+                                       "id":  "day-3-step-2"
+                                   }
+                               ]
+                 }
+             ],
+    "generatedThroughDay":  3,
+    "generationStatus":  "complete"
+}

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authorizeAdminRequest, consumeGlobalRateLimit, consumeRequestRateLimit } from "@/lib/api-security";
+import { authorizeAdminRequest, consumeGlobalRateLimit, consumeRequestRateLimit, readBoundedJson } from "@/lib/api-security";
 import { isShowcaseMode, showcaseReadOnlyError } from "@/lib/deployment-mode";
 import { listShowcaseStudyPlans } from "@/lib/showcase-study-plans";
 import {
@@ -254,12 +254,8 @@ function normalizeDuration(value: unknown): DetailedStudyPlanDuration | null {
 }
 
 async function readRequestBody(request: Request) {
-  try {
-    const value = await request.json();
-    return isRecord(value) ? value : null;
-  } catch {
-    return null;
-  }
+  const bodyResult = await readBoundedJson(request, { maxBytes: 4_096, label: "Study plan" });
+  return bodyResult.ok && isRecord(bodyResult.value) ? bodyResult.value : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -9,6 +9,7 @@ import { getCurrentRecommendation, getLearningRecommendation } from "@/lib/radar
 import { getCurrentAnonymousUserId } from "@/lib/anonymous-session";
 import { getUserPreference } from "@/lib/preferences";
 import { getDeploymentMode } from "@/lib/deployment-mode";
+import { showcaseProfile } from "@/lib/showcase-content";
 
 export const dynamic = "force-dynamic";
 
@@ -69,8 +70,8 @@ export default async function DetailedLearningPlanPage({
           projectName={recommendation.repo.fullName}
           language={recommendation.repo.primaryLanguage}
           cloneGoal={recommendation.analysis.miniCloneScope.goal}
-          learnerLevel={preference.level}
-          learnerGoal={preference.goal}
+          learnerLevel={deploymentMode === "showcase" ? showcaseProfile.level : preference.level}
+          learnerGoal={deploymentMode === "showcase" ? showcaseProfile.goal : preference.goal}
           initialPlans={plans}
           showcaseMode={deploymentMode === "showcase"}
         />

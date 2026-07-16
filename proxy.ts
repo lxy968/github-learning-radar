@@ -7,10 +7,23 @@ import {
   isValidAnonymousSessionToken
 } from "@/lib/anonymous-session";
 import { registerAnonymousSession } from "@/lib/anonymous-session-store";
+import { consumeRequestRateLimit } from "@/lib/api-security";
 
 export async function proxy(request: NextRequest) {
   const existingToken = request.cookies.get(anonymousSessionCookieName)?.value;
   if (existingToken && isValidAnonymousSessionToken(existingToken)) return NextResponse.next();
+
+  const creationLimit = await consumeRequestRateLimit(request, {
+    scope: "anonymous-session-create",
+    limit: 120,
+    windowMs: 60 * 60_000
+  });
+  if (!creationLimit.allowed) {
+    return new NextResponse("Too many new anonymous sessions. Please try again later.", {
+      status: 429,
+      headers: { "Retry-After": String(creationLimit.retryAfterSeconds) }
+    });
+  }
 
   const issuedAt = new Date();
   const token = createAnonymousSessionToken(issuedAt);

@@ -3,6 +3,7 @@ import { scoreRepository } from "@/lib/scoring";
 import { getLatestRadarRun } from "@/lib/radar-runs";
 import { createRuleBasedAnalysis, upgradeLegacyRecommendationContent } from "@/lib/ai/analyze";
 import { getRepositoryCandidate } from "@/lib/repository-store";
+import { showcaseFeaturedRepoId } from "@/lib/showcase-content";
 import type { RadarCategory, RadarRecommendation, UserPreference } from "@/lib/types";
 
 export function getRecommendations(preference: UserPreference = defaultPreference): RadarRecommendation[] {
@@ -21,7 +22,11 @@ export function getRecommendations(preference: UserPreference = defaultPreferenc
         rank: 0
       };
     })
-    .sort((a, b) => b.score.finalScore - a.score.finalScore)
+    .sort((a, b) => {
+      if (a.repo.id === showcaseFeaturedRepoId) return -1;
+      if (b.repo.id === showcaseFeaturedRepoId) return 1;
+      return b.score.finalScore - a.score.finalScore;
+    })
     .map((item, index) => ({ ...item, rank: index + 1 }));
 }
 

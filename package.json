@@ -4,6 +4,13 @@
   "description": "把 GitHub 开源项目转化为可执行、可验证学习方案的个人学习雷达。",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lxy968/github-learning-radar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lxy968/github-learning-radar/issues"
+  },
   "keywords": [
     "github",
     "learning",
@@ -29,13 +36,14 @@
     "history:secrets": "tsx scripts/git-history-secret-scan.ts",
     "audit:prod": "pnpm audit --prod --audit-level moderate",
     "production:check": "node scripts/production-check.mjs",
-    "release:check": "pnpm repo:hygiene -- --strict && pnpm history:secrets && pnpm audit:prod && pnpm typecheck && pnpm verify && pnpm build",
+    "release:check": "pnpm repo:hygiene -- --strict && pnpm history:secrets && pnpm audit:prod && pnpm typecheck && pnpm verify && pnpm build && pnpm regression:release",
     "discovery:dry-run": "tsx scripts/discovery-dry-run.ts",
     "repository-store:dry-run": "tsx scripts/repository-store-dry-run.ts",
     "dry-run": "tsx scripts/daily-radar-dry-run.ts",
     "worker:radar": "tsx scripts/radar-worker.ts",
     "worker:radar:once": "tsx scripts/radar-worker.ts --once",
     "regression:http": "tsx scripts/http-regression.ts",
+    "regression:release": "node scripts/release-http-regression.mjs",
     "verify": "tsx --no-cache --tsconfig tsconfig.json scripts/verify.ts",
     "ai:smoke": "tsx scripts/ai-smoke.ts",
     "test": "pnpm verify"

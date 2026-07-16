@@ -96,7 +96,7 @@ async function main() {
   assertContains(
     candidateLearning.html,
     expectedDeploymentMode === "showcase"
-      ? ["选择一个学习周期", "预置演示方案", "可体验", "不会现场调用 DeepSeek", "总进度"]
+      ? ["选择一个学习周期", "DeepSeek 真实生成缓存", "可体验", "不会现场调用 DeepSeek", "总进度"]
       : ["选择一个学习周期", "3 天", "7 天", "14 天"]
   );
   const candidatePathParts = candidateLearningHref.split("/");
@@ -141,7 +141,7 @@ async function main() {
     const showcasePlan = firstPlansPayload.plans?.find((plan) => plan.duration === 3);
     assert.equal(firstPlansPayload.status, "success");
     assert.equal(firstPlansPayload.job, null);
-    assert.ok(showcasePlan?.id.startsWith("showcase-plan-v1-"));
+    assert.equal(showcasePlan?.id, "showcase-hermes-agent-3-v1");
     assert.equal(showcasePlan?.generationStatus, "complete");
     assert.equal(showcasePlan?.days.length, 3);
     assert.equal(showcasePlan?.providerAttempts?.length, 0);
@@ -210,7 +210,7 @@ async function main() {
   if (expectedDeploymentMode === "showcase") {
     assertContains(learning.html, [
       "作品集预置体验",
-      "预置演示方案",
+      "DeepSeek 真实生成缓存",
       "可体验",
       "不会现场调用 DeepSeek",
       "总进度"

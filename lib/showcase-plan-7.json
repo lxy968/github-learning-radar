@@ -1,0 +1,354 @@
+{
+    "id":  "showcase-hermes-agent-7-v1",
+    "repoId":  1024554267,
+    "repoFullName":  "NousResearch/hermes-agent",
+    "duration":  7,
+    "source":  "ai",
+    "provider":  "deepseek",
+    "modelId":  "deepseek-v4-pro",
+    "providerAttempts":  [
+                             {
+                                 "provider":  "deepseek",
+                                 "modelId":  "deepseek-v4-pro",
+                                 "status":  "success",
+                                 "usage":  {
+                                               "inputTokens":  1507,
+                                               "outputTokens":  10594,
+                                               "totalTokens":  12101
+                                           }
+                             }
+                         ],
+    "cache":  {
+                  "key":  "showcase-hermes-agent-7-v1",
+                  "inputHash":  "a0909d25ee9dbd90ecf3a6ca568ad00659ad713b6fe687824e016e03429d124d",
+                  "preferenceLevel":  "beginner",
+                  "preferenceGoal":  "portfolio",
+                  "promptVersion":  "detailed-plan-prompt-v5",
+                  "schemaVersion":  "detailed-plan-schema-v4",
+                  "provider":  "deepseek",
+                  "modelId":  "deepseek-v4-pro"
+              },
+    "basedOnPushedAt":  "2026-07-13T02:46:49Z",
+    "generatedAt":  "2026-07-13T14:56:13.957Z",
+    "summary":  "跟随NousResearch/hermes-agent仓库，从零构建一个极简的自改进CLI代理。涵盖基本对话循环、多模型切换、技能自动生成和记忆nudge，适合初学者快速理解AI代理核心机制。",
+    "prerequisites":  [
+                          "掌握Python基础知识（变量、函数、文件读写）",
+                          "已安装Python 3.10或更高版本",
+                          "已安装Git并了解基本操作",
+                          "拥有OpenAI（或Anthropic、OpenRouter）的API密钥",
+                          "能够使用终端执行命令",
+                          "安装代码编辑器（例如VS Code）"
+                      ],
+    "glossary":  [
+                     {
+                         "term":  "LLM (Large Language Model)",
+                         "explanation":  "大语言模型，像GPT-4这样能理解人类语言并生成回复的AI程序，是整个代理的“大脑”。"
+                     },
+                     {
+                         "term":  "Agent (代理)",
+                         "explanation":  "一个能自主执行多步任务的AI程序，可以调用外部工具、记住信息并持续自我改进。"
+                     },
+                     {
+                         "term":  "Skill (技能)",
+                         "explanation":  "代理根据用户需求自动生成的、可重复使用的自动化脚本，让代理学会新本领。"
+                     },
+                     {
+                         "term":  "Memory Nudge (记忆提示)",
+                         "explanation":  "代理每隔固定条消息自动总结对话内容并保存，以便之后“回忆”关键信息。"
+                     },
+                     {
+                         "term":  "API Key (密钥)",
+                         "explanation":  "一串秘密字符，用于向AI服务商证明你的身份，必须保管好且通过环境变量安全地配置。"
+                     },
+                     {
+                         "term":  "CLI (Command-Line Interface)",
+                         "explanation":  "命令行界面，在终端里通过打字输入指令与程序交互，没有图形按钮和鼠标操作。"
+                     }
+                 ],
+    "days":  [
+                 {
+                     "day":  1,
+                     "goal":  "建立项目骨架，编写一个能接受文本输入并回显的基础命令行界面。",
+                     "outcome":  "运行`python main.py`后会进入对话循环，输入文字被原样打印，输入“quit”退出。",
+                     "steps":  [
+                                   {
+                                       "title":  "创建项目目录并安装依赖",
+                                       "purpose":  "为迷你代理搭建干净的Python环境，安装后续需要的核心库。",
+                                       "actions":  [
+                                                       "打开终端，执行 `mkdir mini_hermes_agent \u0026\u0026 cd mini_hermes_agent` 建立项目文件夹。",
+                                                       "创建Python虚拟环境：`python -m venv venv`，然后激活它 (Windows: `venv\\Scripts\\activate`，Mac/Linux: `source venv/bin/activate`)。",
+                                                       "安装依赖包：`pip install openai python-dotenv`，等待安装完成。",
+                                                       "新建空文件 `main.py` 作为程序入口。"
+                                                   ],
+                                       "references":  [
+                                                          ".env.example"
+                                                      ],
+                                       "verification":  "在终端中执行 `pip list`，应看到 `openai` 和 `python-dotenv` 在列表中。",
+                                       "deliverable":  "项目目录 `mini_hermes_agent/`，内包含 `venv/` 和 `main.py`。",
+                                       "estimatedMinutes":  30,
+                                       "id":  "day-1-step-1"
+                                   },
+                                   {
+                                       "title":  "实现基础CLI输入输出循环",
+                                       "purpose":  "搭建代理与人交互的骨架，后续会替换为AI生成的回复。",
+                                       "actions":  [
+                                                       "用代码编辑器打开 `main.py`，写入以下代码：\n```python\nwhile True:\n    user_input = input(\"You: \")\n    if user_input.lower() == \"quit\":\n        print(\"Goodbye!\")\n        break\n    print(f\"Agent: {user_input}\")\n```",
+                                                       "保存文件后回到终端，运行 `python main.py`。",
+                                                       "尝试输入 `hello`，观察输出是否为 `Agent: hello`；输入 `quit` 检验程序是否退出。"
+                                                   ],
+                                       "references":  [
+                                                          "cli.py"
+                                                      ],
+                                       "verification":  "输入 `hello` 后看到 `Agent: hello`，输入 `quit` 后程序正常结束。",
+                                       "deliverable":  "`main.py` 包含基础对话循环代码。",
+                                       "estimatedMinutes":  30,
+                                       "id":  "day-1-step-2"
+                                   }
+                               ]
+                 },
+                 {
+                     "day":  2,
+                     "goal":  "接入OpenAI大模型，让代理真正能够生成智能回复。",
+                     "outcome":  "在对话中提问“你好”，代理不再是复读机，而是返回来自AI的礼貌问候。",
+                     "steps":  [
+                                   {
+                                       "title":  "安全配置API密钥并编写模型调用函数",
+                                       "purpose":  "学会用环境变量保护密钥，并封装一次模型请求。",
+                                       "actions":  [
+                                                       "在项目根目录创建 `.env` 文件，写入 `OPENAI_API_KEY=你的真实密钥`（参考仓库的 `.env.example`）。",
+                                                       "在 `main.py` 开头添加 `from dotenv import load_dotenv` 和 `load_dotenv()`，然后在程序末尾新增函数：\n```python\nimport os\nimport openai\n\ndef get_llm_response(prompt):\n    response = openai.ChatCompletion.create(\n        model=\"gpt-3.5-turbo\",\n        messages=[",
+                                                       "临时在循环中调用该函数并打印结果（替换之前的回显）以测试。"
+                                                   ],
+                                       "references":  [
+                                                          ".env.example",
+                                                          "hermes_constants.py"
+                                                      ],
+                                       "verification":  "运行程序，输入“你好”，控制台应输出GPT生成的一段问候文本。",
+                                       "deliverable":  "`main.py` 集成了 `get_llm_response` 函数，能成功收到AI回复。",
+                                       "estimatedMinutes":  40,
+                                       "id":  "day-2-step-1"
+                                   },
+                                   {
+                                       "title":  "将模型回复接入交互循环",
+                                       "purpose":  "完成从用户输入到AI输出的完整流程。",
+                                       "actions":  [
+                                                       "修改 `main.py` 的循环，将 `print(f\"Agent: {user_input}\")` 改为 `print(f\"Agent: {get_llm_response(user_input)}\")`。",
+                                                       "在 `get_llm_response` 内添加系统提示，把 messages 改为 `[{\"role\": \"system\", \"content\": \"你是一个乐于助人的助手。\"}, {\"role\": \"user\", \"content\": prompt}]`。",
+                                                       "再次运行 `python main.py`，进行几轮对话，观察回复是否符合助手角色。"
+                                                   ],
+                                       "references":  [
+                                                          "model_tools.py"
+                                                      ],
+                                       "verification":  "多次对话后，代理始终以助手口吻回复，且内容相关。",
+                                       "deliverable":  "`main.py` 实现完整的CLI对话功能。",
+                                       "estimatedMinutes":  20,
+                                       "id":  "day-2-step-2"
+                                   }
+                               ]
+                 },
+                 {
+                     "day":  3,
+                     "goal":  "实现多模型切换能力，可通过修改环境变量更换底层大模型。",
+                     "outcome":  "修改 `.env` 中的 `MODEL_PROVIDER` 为 `openrouter` 并重启程序，代理即调用OpenRouter的模型。",
+                     "steps":  [
+                                   {
+                                       "title":  "创建多提供商适配层",
+                                       "purpose":  "把不同AI公司的调用方式封装成统一接口，方便之后切换。",
+                                       "actions":  [
+                                                       "新建文件 `providers.py`，写入 `def create_completion(provider, model, messages, api_key)` 函数。",
+                                                       "根据 `provider` 参数实现三个分支：`\"openai\"` 时使用 `openai.ChatCompletion.create`；`\"anthropic\"` 时安装 `pip install anthropic` 后调用 Anthropic SDK；`\"openrouter\"` 使用 `openai` 库但设置 `api_base = \"https://openrouter.ai/api/v1\"`。",
+                                                       "在 `.env` 中添加 `MODEL_PROVIDER=openai` 以及对应的密钥变量（如 `ANTHROPIC_API_KEY`），并在 `providers.py` 中读取。"
+                                                   ],
+                                       "references":  [
+                                                          "providers/"
+                                                      ],
+                                       "verification":  "编写一个简单测试脚本 `test_provider.py`，手动调用 `create_completion` 并打印结果，确保三个提供商均能返回合法内容。",
+                                       "deliverable":  "`providers.py` 文件，支持至少两个提供商（如 OpenAI 和 OpenRouter）。",
+                                       "estimatedMinutes":  45,
+                                       "id":  "day-3-step-1"
+                                   },
+                                   {
+                                       "title":  "在代理中集成提供商选择",
+                                       "purpose":  "让代理启动时根据配置自动选取模型服务。",
+                                       "actions":  [
+                                                       "在 `main.py` 开头读取 `MODEL_PROVIDER` 环境变量，若未设置则默认 `\"openai\"`，并将对应密钥存入变量。",
+                                                       "修改 `get_llm_response` 改为调用 `providers.create_completion(provider=..., model=..., messages=..., api_key=...)`。",
+                                                       "修改 `.env`，将 `MODEL_PROVIDER` 改为 `openrouter`，填入 OpenRouter 密钥，重启程序测试对话。"
+                                                   ],
+                                       "references":  [
+                                                          "hermes_constants.py"
+                                                      ],
+                                       "verification":  "切换 `\u003cstrong\u003eMODEL_PROVIDER` 到 openrouter 并重启后，询问“今天天气怎么样”，代理应返回正常回复（来自 OpenRouter 的模型）。切换回 openai 同样正常。",
+                                       "deliverable":  "`main.py` 更新，代理可根据配置切换模型提供商。",
+                                       "estimatedMinutes":  15,
+                                       "id":  "day-3-step-2"
+                                   }
+                               ]
+                 },
+                 {
+                     "day":  4,
+                     "goal":  "让代理学会自动生成技能脚本，并能调用这些脚本完成任务。",
+                     "outcome":  "用户输入“创建技能：获取天气”，代理生成 `weather.py` 放入 `skills/` 目录；后续问“天气 北京”时代理执行该脚本返回模拟结果。",
+                     "steps":  [
+                                   {
+                                       "title":  "设计技能加载与执行框架",
+                                       "purpose":  "为技能文件制定统一规则，让代理能发现和使用它们。",
+                                       "actions":  [
+                                                       "创建 `skills/` 目录，在其中新建一个示例技能 `echo.py`，内容为：\n```python\ndef run(args):\n    return f\"你说了：{args}\"\n```",
+                                                       "编写 `skill_loader.py`，编写函数 `load_skills()` 扫描 `skills/` 目录下所有 `.py` 文件，动态导入模块并返回技能名到 `run` 函数的字典。",
+                                                       "在 `main.py` 中导入 `load_skills`，启动时调用并打印已加载的技能列表。"
+                                                   ],
+                                       "references":  [
+                                                          "optional-skills/"
+                                                      ],
+                                       "verification":  "运行程序，启动输出应包含 `已加载技能：echo`；手动调用 `run(\"test\")` 返回 `你说了：test`。",
+                                       "deliverable":  "`skill_loader.py` 和 `skills/` 目录，包含示例技能。",
+                                       "estimatedMinutes":  40,
+                                       "id":  "day-4-step-1"
+                                   },
+                                   {
+                                       "title":  "实现技能自动创建与动态调用",
+                                       "purpose":  "代理能根据自然语言指令生成新技能，并无缝在对话中执行。",
+                                       "actions":  [
+                                                       "在 `main.py` 循环中增加判断：如果用户输入以 `\"创建技能：\"` 开头，则提取技能名和描述，调用 `get_llm_response` 生成该技能的 Python 代码（要求模型返回 `run(args)` 格式的完整代码），保存到 `skills/技能名.py`。",
+                                                       "每次对话开始时重新调用 `load_skills()` 刷新技能列表；当用户输入匹配已存在技能名时，将剩余内容作为参数调用该技能的 `run` 函数，并将返回值加入到回复中。",
+                                                       "测试：先输入 `\"创建技能：计算器\"` 让代理生成 `calculator.py`，然后输入 `\"计算器 2+3\"`，代理应返回 `5`。"
+                                                   ],
+                                       "references":  [
+                                                          "agent/",
+                                                          "optional-skills/"
+                                                      ],
+                                       "verification":  "成功创建并执行至少一个自定义技能，例如计算器。",
+                                       "deliverable":  "`main.py` 更新，支持技能创建与动态调用。",
+                                       "estimatedMinutes":  50,
+                                       "id":  "day-4-step-2"
+                                   }
+                               ]
+                 },
+                 {
+                     "day":  5,
+                     "goal":  "加入记忆机制，让代理每隔10条消息自动总结对话，并在后续回答中引用。",
+                     "outcome":  "连续发送10条消息后，程序提示“记忆提示：正在总结”，`memory.json` 出现摘要；重启后询问“我之前说过什么？”代理能回答出关键内容。",
+                     "steps":  [
+                                   {
+                                       "title":  "设计记忆存储与触发总结逻辑",
+                                       "purpose":  "教会代理记录对话要点，形成简单的长期记忆。",
+                                       "actions":  [
+                                                       "创建 `memory.json` 文件，写入空列表 `[]`。",
+                                                       "在 `main.py` 中维护一个计数器 `msg_count`，每收到一条用户消息加一；当 `msg_count % 10 == 0` 时，将最近10轮对话整理成一个字符串，调用 `get_llm_response` 要求模型生成一段简短总结，然后将总结以 JSON 对象形式（包含 `timestamp` 和 `summary`）追加到 `memory.json` 中。",
+                                                       "测试：连续发送10条任意短消息（如“1”，“2”，...），检查 `memory.json` 是否出现新条目，且总结内容相关。"
+                                                   ],
+                                       "references":  [
+                                                          "hermes_state.py"
+                                                      ],
+                                       "verification":  "发送10条消息后，`memory.json` 内数组长度增加1，且包含合理的总结文字。",
+                                       "deliverable":  "`memory.json` 示例文件，`main.py` 更新含计数器和总结触发器。",
+                                       "estimatedMinutes":  45,
+                                       "id":  "day-5-step-1"
+                                   },
+                                   {
+                                       "title":  "在对话中引入记忆上下文",
+                                       "purpose":  "让代理的回答能够参考过去的对话，显得更“懂”你。",
+                                       "actions":  [
+                                                       "修改 `get_llm_response` 函数，在系统提示后附加 `\"以下是关于之前对话的摘要：\"` 并拼接从 `memory.json` 中读取的最后一条摘要（如果存在）。",
+                                                       "确保启动时加载 `memory.json`，对话过程中内存与文件保持同步。",
+                                                       "验证：先触发一次记忆总结，然后重启程序，问 `\"之前我们聊了什么？\"`，代理应能引用记忆中的关键词。"
+                                                   ],
+                                       "references":  [
+                                                          "hermes_state.py"
+                                                      ],
+                                       "verification":  "重启后询问历史相关问题时，代理的回复中出现了记忆摘要中的事实。",
+                                       "deliverable":  "具备基本记忆功能的代理，重启后仍能“回忆”。",
+                                       "estimatedMinutes":  30,
+                                       "id":  "day-5-step-2"
+                                   }
+                               ]
+                 },
+                 {
+                     "day":  6,
+                     "goal":  "集成所有模块并进行端到端测试，确保技能、记忆和模型切换协同工作。",
+                     "outcome":  "一个功能完整的CLI代理，能记住对话、创建并执行技能，并且可以通过环境变量切换后台AI。",
+                     "steps":  [
+                                   {
+                                       "title":  "组合所有功能并执行完整流程测试",
+                                       "purpose":  "实际运行三个核心特性，发现并修复集成问题。",
+                                       "actions":  [
+                                                       "编写一个测试剧本：1) 设置 `.env` 使用 openai，启动代理，进行普通对话；2) 创建技能 `greet.py`（生成问候语）；3) 调用技能 `greet Alice` 验证执行；4) 发送10条无关消息触发记忆提示；5) 切换到 openrouter 提供商，重启后确认对话正常且能引用之前技能和记忆。",
+                                                       "根据测试中发现的问题调整代码，例如技能加载路径、API错误处理（如网络超时重试）。",
+                                                       "确认所有步骤通过。"
+                                                   ],
+                                       "references":  [
+                                                          "tests/",
+                                                          "model_tools.py",
+                                                          "providers/"
+                                                      ],
+                                       "verification":  "所有测试场景均无报错，输出符合预期（技能创建并执行、记忆引用、模型切换成功）。",
+                                       "deliverable":  "经过集成测试的代理程序，无严重bug。",
+                                       "estimatedMinutes":  50,
+                                       "id":  "day-6-step-1"
+                                   },
+                                   {
+                                       "title":  "添加配置模板和项目文档",
+                                       "purpose":  "让其他人也能轻松运行你的作品，并为作品集做准备。",
+                                       "actions":  [
+                                                       "创建 `.gitignore` 文件，写入 `venv/`、`.env`、`__pycache__/` 等忽略规则。",
+                                                       "将 `.env.example` 复制到项目根目录（或从仓库复制过来），清除真实密钥，保留变量名和注释。",
+                                                       "编写 `README.md`，包含项目简介、如何设置 API 密钥、切换模型、启动程序以及主要特性的说明。"
+                                                   ],
+                                       "references":  [
+                                                          ".env.example",
+                                                          "README.md",
+                                                          "AGENTS.md"
+                                                      ],
+                                       "verification":  "他人按照 `README.md` 的指引能够成功启动代理并完成一次对话。",
+                                       "deliverable":  "`README.md`、`.gitignore`、`.env.example` 文件齐全。",
+                                       "estimatedMinutes":  30,
+                                       "id":  "day-6-step-2"
+                                   }
+                               ]
+                 },
+                 {
+                     "day":  7,
+                     "goal":  "重构代码为模块化结构，并记录学习心得，为放入作品集做准备。",
+                     "outcome":  "项目包含清晰的模块：`cli_loop.py`、`llm_client.py`、`provider.py`、`skill_manager.py`、`memory.py`，各司其职，README 包含技术要点。",
+                     "steps":  [
+                                   {
+                                       "title":  "将单一文件重构为模块化代码",
+                                       "purpose":  "提高代码可读性和可维护性，展示工程能力。",
+                                       "actions":  [
+                                                       "将 `main.py` 拆分为多个文件：`cli_loop.py` 负责主循环，`llm_client.py` 封装模型调用，`provider.py` 不变，`skill_manager.py` 包含加载和创建技能，`memory.py` 处理记忆读写。",
+                                                       "在 `main.py` 中只保留导入和启动代码，确保功能与重构前完全一致。",
+                                                       "为每个模块添加简明的文档字符串。"
+                                                   ],
+                                       "references":  [
+                                                          "agent/",
+                                                          "hermes/"
+                                                      ],
+                                       "verification":  "重构后运行 `python main.py`，所有原有功能（对话、技能、记忆）均正常运行。",
+                                       "deliverable":  "模块化后的项目文件夹，包含多个 `.py` 文件。",
+                                       "estimatedMinutes":  60,
+                                       "id":  "day-7-step-1"
+                                   },
+                                   {
+                                       "title":  "撰写学习总结并完善作品集材料",
+                                       "purpose":  "沉淀开发过程中的收获，并让作品更具说服力。",
+                                       "actions":  [
+                                                       "在 `README.md` 中添加“学习要点”章节，用自己的话解释代理循环、技能生成原理、记忆nudge的实现方式。",
+                                                       "记录开发中遇到的困难（如API切换时的 base_url 设置）和解决方法。",
+                                                       "将所有代码提交到本地 Git 仓库，并推送到 GitHub（可选），在 `README` 中添加可访问的链接。"
+                                                   ],
+                                       "references":  [
+                                                          "CONTRIBUTING.md",
+                                                          "AGENTS.md"
+                                                      ],
+                                       "verification":  "阅读理解 `README` 的“学习要点”章节，确认他人可以从中获得清晰的概念。",
+                                       "deliverable":  "包含完整学习笔记的 `README.md` 和 Git 仓库链接。",
+                                       "estimatedMinutes":  30,
+                                       "id":  "day-7-step-2"
+                                   }
+                               ]
+                 }
+             ],
+    "generatedThroughDay":  7,
+    "generationStatus":  "complete"
+}

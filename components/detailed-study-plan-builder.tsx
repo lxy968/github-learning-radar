@@ -181,7 +181,7 @@ export function DetailedStudyPlanBuilder({
             <p className="mt-2 text-sm leading-6 text-slate-600">{cloneGoal}</p>
             {showcaseMode ? (
               <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-900">
-                这是公开演示站：推荐和学习方案会提前准备好。你可以浏览、勾选步骤并刷新查看进度；本站不会现场调用 DeepSeek，也不会产生模型费用。想生成自己的方案，请 Fork 仓库，在你自己的部署中填写 DeepSeek Key。
+                这是公开演示站：3、7、14 天方案均来自提前完成的真实 DeepSeek 调用缓存。你可以浏览、勾选步骤并刷新查看进度；本站不会现场调用模型，也不会产生模型费用。想生成自己的方案，请 Fork 仓库，在你自己的部署中填写 DeepSeek Key。
               </p>
             ) : (
               <p className="mt-1 text-xs leading-5 text-slate-500">
@@ -400,7 +400,7 @@ function DetailedPlanChecklist({
           <div className="max-w-3xl">
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone={showcaseMode ? "blue" : plan.source === "ai" ? "blue" : plan.source === "mixed" ? "green" : "amber"}>
-                {showcaseMode ? "预置演示方案" : plan.source === "ai" ? "智能生成" : plan.source === "mixed" ? "智能生成 + 临时方案" : "临时规则方案"}
+                {showcaseMode ? "DeepSeek 真实生成缓存" : plan.source === "ai" ? "智能生成" : plan.source === "mixed" ? "智能生成 + 临时方案" : "临时规则方案"}
               </Badge>
               <Badge>{plan.duration} 天</Badge>
               <Badge>{isPartial ? `旧方案仅到 Day ${generatedThroughDay}` : "完整方案"}</Badge>

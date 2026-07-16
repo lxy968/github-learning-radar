@@ -19,13 +19,13 @@
 - [ ] 设置仓库描述、Topics、主页地址和 MIT License 识别。
 - [ ] 默认分支设为 `main`，启用分支保护并要求 CI 通过。
 - [ ] 启用 Dependabot alerts、secret scanning 和 Private Vulnerability Reporting。
-- [ ] 设置 `RADAR_CRON_URL`、`CRON_SECRET`，确认 Actions 日志不输出密钥。
+- [ ] showcase 保持仓库变量 `ENABLE_DAILY_RADAR` 未设置；full 自部署才设置 `ENABLE_DAILY_RADAR=true`、`RADAR_CRON_URL` 和 `CRON_SECRET`，并确认 Actions 日志不输出密钥。
 - [ ] 检查 Issue/PR 模板和行为准则链接。
 
 ## 数据库与部署
 
 - [ ] Neon Web 使用池化 URL，Migration 使用直连 URL；两者都包含 `sslmode=require`，且没有写入仓库或日志。
-- [ ] Vercel 只配置 showcase 所需的五个 Production 变量，未配置 GitHub/DeepSeek/OpenAI/Admin/Cron Secret。
+- [ ] Vercel 只配置 showcase 所需的五个 Production 变量，首次私有验收保持 `PUBLIC_REPOSITORY_PUBLISHED=false`，且未配置 GitHub/DeepSeek/OpenAI/Admin/Cron Secret。
 - [ ] Vercel 版本化 `vercel.json` 的 Web 生产预检通过，并只构建 Production 分支。
 - [ ] 生产 PostgreSQL 已备份。
 - [ ] Web、Worker、Migration 三个 `production:check` profile 分别通过，警告已人工确认。
@@ -35,7 +35,7 @@
 - [ ] `pnpm db:migrate` 在目标数据库成功。
 - [ ] `pnpm db:rebuild-radar-projections` 完成，投影行数与热雷达一致。
 - [ ] 数据保留 dry-run 数量已核对，apply 策略与备份周期一致。
-- [ ] Web、Worker 和 Cron 分别部署并使用最小权限密钥。
+- [ ] showcase 只部署 Web；full 才分别部署 Web、Worker 和 Cron 并使用最小权限密钥。
 - [ ] `/api/health` 返回 PostgreSQL 存储、无过期运行任务。
 - [ ] sitemap、robots、canonical 使用运行时 `SITE_URL`，不含构建环境 localhost 或预览域名。
 

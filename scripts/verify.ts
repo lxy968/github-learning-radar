@@ -61,9 +61,9 @@ import { runFairWorkerCycle, type WorkerKind } from "../lib/worker-scheduler";
 import { getSiteUrl } from "../lib/site-url";
 import {
   createShowcaseStudyPlan,
-  listShowcaseStudyPlans,
-  showcaseStudyPlanVersion
+  listShowcaseStudyPlans
 } from "../lib/showcase-study-plans";
+import { showcaseRecommendation, showcaseStudyPlans as generatedShowcaseStudyPlans } from "../lib/showcase-content";
 import { runDataRetention, type DataRetentionPolicy } from "../lib/data-retention";
 import { classifyOperationalError, getRetryDelayMs, withOperationalRetry } from "../lib/operational-errors";
 import { sanitizeReadmeExcerpt } from "../lib/readme";
@@ -819,7 +819,7 @@ function verifyPortfolioOverview() {
 }
 
 function verifyShowcaseStudyPlanFixture() {
-  const recommendation = getRecommendations(defaultPreference)[0];
+  const recommendation = showcaseRecommendation;
   const showcaseEnv = {
     NODE_ENV: "production",
     APP_DEPLOYMENT_MODE: "showcase",
@@ -827,19 +827,28 @@ function verifyShowcaseStudyPlanFixture() {
   } as NodeJS.ProcessEnv;
   const first = createShowcaseStudyPlan(recommendation, defaultPreference, showcaseEnv);
   const repeated = createShowcaseStudyPlan(recommendation, defaultPreference, showcaseEnv);
+  const preparedPlans = listShowcaseStudyPlans([recommendation], defaultPreference, showcaseEnv);
 
   assert.equal(first.id, repeated.id);
-  assert.ok(first.id.startsWith(`${showcaseStudyPlanVersion}-${recommendation.repo.id}-`));
+  assert.equal(first.id, "showcase-hermes-agent-3-v1");
   assert.equal(first.duration, 3);
   assert.equal(first.days.length, 3);
   assert.equal(first.generatedThroughDay, 3);
   assert.equal(first.generationStatus, "complete");
+  assert.equal(first.source, "ai");
+  assert.equal(first.provider, undefined);
   assert.equal(first.providerAttempts?.length, 0);
-  assert.equal(first.cache?.provider, "rule");
-  assert.equal(first.cache?.modelId, showcaseStudyPlanVersion);
-  assert.equal(/deepseek-v4/i.test(JSON.stringify(first)), false);
+  assert.equal(first.cache, undefined);
+  assert.deepEqual(preparedPlans.map((plan) => plan.duration), [3, 7, 14]);
+  assert.deepEqual(preparedPlans.map((plan) => plan.days.length), [3, 7, 14]);
+  assert.ok(preparedPlans.every((plan) => plan.source === "ai" && plan.generationStatus === "complete"));
+  assert.ok(generatedShowcaseStudyPlans.every((plan) => plan.provider === "deepseek"));
+  assert.ok(generatedShowcaseStudyPlans.every((plan) => plan.providerAttempts?.[0]?.status === "success"));
+  assert.ok(generatedShowcaseStudyPlans.every((plan) => plan.cache?.modelId === "deepseek-v4-pro"));
+  assert.equal(JSON.stringify(preparedPlans).includes("must-not-be-used"), false);
   assert.ok(first.days.every((day) => day.steps.length > 0));
-  assert.deepEqual(listShowcaseStudyPlans([recommendation], defaultPreference, showcaseEnv), [first]);
+  assert.deepEqual(preparedPlans[0], first);
+  assert.deepEqual(listShowcaseStudyPlans([getRecommendations(defaultPreference)[1]], defaultPreference, showcaseEnv), []);
   assert.deepEqual(
     listShowcaseStudyPlans(
       [recommendation],
@@ -1758,9 +1767,9 @@ async function verifyDetailedPlanFocusMode() {
     })
   );
   assert.ok(showcaseMarkup.includes("作品集预置体验"));
-  assert.ok(showcaseMarkup.includes("不会现场调用 DeepSeek"));
+  assert.ok(showcaseMarkup.includes("不会现场调用模型"));
   assert.ok(showcaseMarkup.includes("不会产生模型费用"));
-  assert.ok(showcaseMarkup.includes("预置演示方案"));
+  assert.ok(showcaseMarkup.includes("DeepSeek 真实生成缓存"));
   assert.equal(showcaseMarkup.includes("开始后台生成"), false);
   assert.equal(showcaseMarkup.includes("重新生成"), false);
 

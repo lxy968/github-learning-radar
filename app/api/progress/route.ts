@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { consumeRequestRateLimit } from "@/lib/api-security";
+import { consumeRequestRateLimit, readBoundedJson } from "@/lib/api-security";
 import { getLearningProgress, mergeLearningProgress } from "@/lib/learning-progress";
 import { resolveAnonymousSession } from "@/lib/session-context";
 
@@ -45,13 +45,11 @@ export async function PUT(request: Request) {
   const session = await resolveAnonymousSession(request);
   if (!session) return sessionRequired();
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Request body must be JSON" }, { status: 400 });
+  const bodyResult = await readBoundedJson(request, { maxBytes: 131_072, label: "Progress" });
+  if (!bodyResult.ok) {
+    return NextResponse.json({ error: bodyResult.error }, { status: bodyResult.status });
   }
-  const parsed = updateSchema.safeParse(body);
+  const parsed = updateSchema.safeParse(bodyResult.value);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid progress payload", issues: parsed.error.issues }, { status: 400 });
   }
